@@ -1,0 +1,12 @@
+[Unit]
+Description=Calibration Service
+After=generic-board-startup.service
+
+
+[Service]
+Environment="SCRIPT_ARGS=%I"
+ExecStart=/opt/calib-service/startCalib.sh $SCRIPT_ARGS
+User=pocketnc
+
+[Install]
+WantedBy=multi-user.target
