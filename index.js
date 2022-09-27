@@ -6,6 +6,13 @@ const { exec } = require("child_process");
 const execPromise = util.promisify(exec);
 const fs = require('fs');
 
+var process_type = null;
+process.argv.forEach(function (val, index, array) {
+  console.log(index + ': ' + val);
+  if(index === 2){
+    process_type = val;
+  }
+});
 
 /*
 WebSocketServer for communication with UI
@@ -35,6 +42,7 @@ const STAGES = {
   SETUP_CMM: 'SETUP_CMM',
   PROBE_MACHINE_POS: 'PROBE_MACHINE_POS',
   SETUP_PART_CSY: 'SETUP_PART_CSY',
+  PROBE_FIXTURE_BALL_POS: 'PROBE_FIXTURE_BALL_POS',
   PROBE_SPINDLE_POS: 'PROBE_SPINDLE_POS',
   REPEATABILITY_X: 'REPEATABILITY_X',
   REPEATABILITY_Y: 'REPEATABILITY_Y',
@@ -48,18 +56,23 @@ const STAGES = {
   SETUP_CNC_CSY: 'SETUP_CNC_CSY',
   CHARACTERIZE_A: 'CHARACTERIZE_A',
   CHARACTERIZE_B: 'CHARACTERIZE_B',
-  WRITE_RESULTS: 'WRITE_RESULTS',
+  CALC_CALIB: 'CALC_CALIB',
+  WRITE_CALIB: 'WRITE_CALIB',
   //verification-only stages
   RESTART_CNC: 'RESTART_CNC',
   SETUP_VERIFY: 'SETUP_VERIFY',
+  VERIFY_A_HOMING: 'VERIFY_A_HOMING',
+  VERIFY_B_HOMING: 'VERIFY_B_HOMING',
   VERIFY_A: 'VERIFY_A',
   VERIFY_B: 'VERIFY_B',
-  WRITE_VERIFY_REPORT: 'WRITE_VERIFY_REPORT'
+  CALC_VERIFY: 'CALC_VERIFY',
+  WRITE_VERIFY: 'WRITE_VERIFY'
 }
 
 const LOADABLE_STAGE_LIST = [STAGES.PROBE_MACHINE_POS, STAGES.PROBE_SPINDLE_POS,
   STAGES.CHARACTERIZE_X, STAGES.CHARACTERIZE_Y, STAGES.CHARACTERIZE_Z,
   STAGES.PROBE_TOP_PLANE,
+  STAGES.PROBE_FIXTURE_BALL_POS,
   STAGES.CHARACTERIZE_A, STAGES.CHARACTERIZE_B,
   STAGES.VERIFY_A, STAGES.VERIFY_B
 ]
@@ -96,11 +109,14 @@ const CALIB_ORDER = [
   STAGES.PROBE_MACHINE_POS,
   STAGES.SETUP_PART_CSY,
   STAGES.PROBE_SPINDLE_POS,
-  STAGES.CHARACTERIZE_X, STAGES.CHARACTERIZE_Z, STAGES.CHARACTERIZE_Y,
+  STAGES.CHARACTERIZE_X, STAGES.CHARACTERIZE_Z, 
   STAGES.PROBE_TOP_PLANE,
+  STAGES.PROBE_FIXTURE_BALL_POS,
+  STAGES.CHARACTERIZE_Y,
   STAGES.SETUP_CNC_CSY,
   STAGES.CHARACTERIZE_A, STAGES.CHARACTERIZE_B,
-  STAGES.WRITE_RESULTS,
+  STAGES.CALC_CALIB,
+  STAGES.WRITE_CALIB,
 ]
 
 const VERIFY_ORDER = [
@@ -109,8 +125,12 @@ const VERIFY_ORDER = [
   STAGES.SETUP_CMM,
   STAGES.SETUP_VERIFY,
   //'VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
-  STAGES.VERIFY_A, STAGES.VERIFY_B,
-  STAGES.WRITE_VERIFY_REPORT,
+  // STAGES.VERIFY_A_HOMING, 
+  STAGES.VERIFY_A, 
+  // STAGES.VERIFY_B_HOMING, 
+  STAGES.VERIFY_B, 
+  STAGES.CALC_VERIFY,
+  STAGES.WRITE_VERIFY,
 ]
 
 const A_COMP_PATH = '/var/opt/pocketnc/a.comp';
@@ -157,8 +177,10 @@ class RockhopperClient {
     });
   }
   runIntervalConnect() {
+    console.log('runIntervalConnect')
+    console.log(this.intervalConnect)
     if(this.intervalConnect !== false) { return }
-    this.intervalConnect = setInterval(this.connect, 3000)
+    this.intervalConnect = setInterval(this.connect, 5000)
   }
   stopIntervalConnect() {
     if(this.intervalConnect === false) return
@@ -169,7 +191,9 @@ class RockhopperClient {
     this.client.on('connectFailed', (error) => {
         this.connected = false;
         this.socket = undefined;
-        this.runIntervalConnect();
+        if(this.intervalConnect === false){
+          this.runIntervalConnect();
+        }
         console.log('Rockhopper Connect Error: ' + error.toString());
       }
     );
@@ -186,7 +210,7 @@ class RockhopperClient {
 
       socket.on('error', (error) => {
         this.connected = false;
-        this.runIntervalConnect();
+        // this.runIntervalConnect();
         console.log("Rockhopper Connection error: " + error.toString());
       });
       socket.on('close', () => {
@@ -399,6 +423,19 @@ class RockhopperClient {
       )
     )
   }
+  setSkipCmm = async (val) => {
+    const paramVal = val === true ? 1 : 0;
+    this.send(
+      JSON.stringify(
+        {
+          "0": `o<cmm_set_skip_cmm> call [${paramVal}]`,
+          "id":"PUT_MDI_CMD",
+          "name":"mdi_cmd",
+          "command":"put",
+        }
+      )
+    )
+  }
 }
 
 rockhopperClient = new RockhopperClient();
@@ -428,11 +465,15 @@ class CalibProcess {
     this.uiConnected = false;
     this.uiConnection = undefined;
 
+    this.skipCmm = false;
+
     this.cmmConnected = false
     this.lastCmmPing = undefined;
 
-    this.currentStep, this.currentStage = undefined;
+    this.aHomeErr = null;
+    this.bHomeErr = null;
 
+    this.currentStep, this.currentStage = undefined;
     this.stages = {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false}}), {}),
@@ -463,7 +504,7 @@ class CalibProcess {
     this.rockhopperClient.on('connectFailed', function(error) {
       this.rockhopperConnected = false;
       this.rockhopperConnection = undefined;
-      this.runIntervalConnectRockhopper();
+      // this.runIntervalConnectRockhopper();
       console.log('Rockhopper Connect Error: ' + error.toString());
     });
     this.rockhopperClient.on('connect', function(connection) {
@@ -473,13 +514,13 @@ class CalibProcess {
       console.log('Rockhopper Connection established!');
       connection.on('error', function(error) {
         this.rockhopperConnected = false;
-        this.runIntervalConnectRockhopper();
+        // this.runIntervalConnectRockhopper();
         console.log("Rockhopper Connection error: " + error.toString());
       });
       connection.on('close', function() {
         this.rockhopperConnected = false;
         this.rockhopperConnection = undefined;
-        this.runIntervalConnectRockhopper();
+        // this.runIntervalConnectRockhopper();
         console.log('Rockhopper Connection closed!');
       });
       connection.on('message', function(message) {
@@ -490,7 +531,8 @@ class CalibProcess {
   }
 }
 
-const calibProcess = new CalibProcess(PROCESS_NEW);
+console.log("starting with process type " + process_type);
+var calibProcess = new CalibProcess(process_type);
 calibProcess.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
 // calibProcess.stages.calib[STAGES.SETUP_CNC].completed = true
 // calibProcess.stages.calib[STAGES.SETUP_CMM].completed = true
@@ -498,13 +540,15 @@ calibProcess.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
 // calibProcess.stages.calib[STAGES.SETUP_PART_CSY].completed = true
 // calibProcess.stages.calib[STAGES.PROBE_SPINDLE_POS].completed = true
 // calibProcess.stages.calib[STAGES.CHARACTERIZE_X].completed = true
-// calibProcess.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
 // calibProcess.stages.calib[STAGES.CHARACTERIZE_Z].completed = true
 // calibProcess.stages.calib[STAGES.PROBE_TOP_PLANE].completed = true
+// calibProcess.stages.calib[STAGES.PROBE_FIXTURE_BALL_POS].completed = true
+// calibProcess.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
 // calibProcess.stages.calib[STAGES.SETUP_CNC_CSY].completed = true
 // calibProcess.stages.calib[STAGES.CHARACTERIZE_A].completed = true
 // calibProcess.stages.calib[STAGES.CHARACTERIZE_B].completed = true
-// calibProcess.stages.calib[STAGES.WRITE_RESULTS].completed = true
+// calibProcess.stages.calib[STAGES.CALC_CALIB].completed = true
+// calibProcess.stages.calib[STAGES.WRITE_CALIB].completed = true
 
 // calibProcess.stages.verify[STAGES.RESTART_CNC].completed = true
 // calibProcess.stages.verify[STAGES.SETUP_CNC].completed = true
@@ -512,6 +556,7 @@ calibProcess.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
 // calibProcess.stages.verify[STAGES.SETUP_VERIFY].completed = true
 // calibProcess.stages.verify[STAGES.VERIFY_A].completed = true
 // calibProcess.stages.verify[STAGES.VERIFY_B].completed = true
+// calibProcess.stages.verify[STAGES.CALC_VERIFY].completed = true
 
 var lastCmmPing = 0;
 var lastCmmPingSuccesful = false;
@@ -846,6 +891,12 @@ async function runProbeSpindlePos(){
   await new Promise(r => setTimeout(r, 2000));
   await rockhopperClient.cycleStart()
 }
+async function runProbeFixtureBallPos(){
+  console.log('runProbeFixtureBallPos');
+  await rockhopperClient.programOpenCmd('v2_calib_probe_fixture_ball_pos.ngc')
+  await new Promise(r => setTimeout(r, 2000));
+  await rockhopperClient.cycleStart()
+}
 async function runCharacterizeX(){
   console.log('runCharacterizeX');
   for(let idx = 0; idx < 5; idx++){
@@ -1020,7 +1071,9 @@ async function runCharacterizeA(conn){
   await rockhopperClient.cycleStart();
   await rockhopperClient.waitForDoneAndIdle(1000);
   await new Promise(r => setTimeout(r, 1000));
-
+  if(![STATE_RUN, STATE_STEP].includes(actualState)){
+    return;
+  }
   await rockhopperClient.programOpenCmd('v2_calib_characterize_a.ngc');
   await rockhopperClient.cycleStart();
 }
@@ -1037,13 +1090,13 @@ async function runCharacterizeB(conn){
       return;
     }
     if(idx < 4){
-      await rockhopperClient.mdiCmdAsync("G0 B-20");
+      await rockhopperClient.mdiCmdAsync("G0 B-10");
       await rockhopperClient.unhomeAxisAsync([4]);
       await rockhopperClient.homeAxisAsync([4]);
     }
   }
-  await rockhopperClient.programOpenCmd('v2_calib_verify_b_home.ngc');
   await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.programOpenCmd('v2_calib_verify_b_home.ngc');
   await rockhopperClient.cycleStart();
   await rockhopperClient.waitForDoneAndIdle(1000);
   await new Promise(r => setTimeout(r, 1000));
@@ -1054,9 +1107,15 @@ async function runCharacterizeB(conn){
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
-async function runWriteResults(conn){
-  console.log('runWriteResults');
-  await rockhopperClient.programOpenCmd('v2_calib_write_results.ngc');
+async function runCalcCalib(conn){
+  console.log('runCalcCalib');
+  await rockhopperClient.programOpenCmd('v2_calib_calc_calib.ngc');
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.cycleStart();
+}
+async function runWriteCalib(conn){
+  console.log('runWriteCalib');
+  await rockhopperClient.programOpenCmd('v2_calib_write_calib.ngc');
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
@@ -1094,21 +1153,116 @@ async function runSetupVerify(conn){
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
+async function runVerifyAHoming(conn){
+  console.log('runVerifyAHoming');
+  await rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+  for(let idx = 0; idx < 5; idx++){
+    await rockhopperClient.programOpenCmd('v2_calib_probe_a_home.ngc')
+    await new Promise(r => setTimeout(r, 1000));
+    await rockhopperClient.cycleStart();
+    await rockhopperClient.waitForDoneAndIdle(1000);
+
+    if(![STATE_RUN, STATE_STEP].includes(actualState)){
+      return;
+    }
+    if(idx < 4){
+      await rockhopperClient.mdiCmdAsync("G0 A-10");
+      await rockhopperClient.unhomeAxisAsync([3]);
+      await rockhopperClient.homeAxisAsync([3]);
+    }
+  }
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.programOpenCmd('v2_calib_verify_a_homing.ngc');
+  await rockhopperClient.cycleStart();
+}
 async function runVerifyA(conn){
   console.log('runVerifyA');
+  await rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.programOpenCmd('v2_calib_probe_a_home.ngc')
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.cycleStart();
+  await rockhopperClient.waitForDoneAndIdle(1000);
+  var homingAttemptsCount = 0;
+  while(Math.abs(calibProcess.aHomeErr) > 0.01){
+    if(![STATE_RUN, STATE_STEP].includes(actualState)){
+      return;
+    }
+    console.log(calibProcess.aHomeErr);
+    homingAttemptsCount++;
+    await rockhopperClient.mdiCmdAsync("G0 A-10");
+    await rockhopperClient.unhomeAxisAsync([3]);
+    await rockhopperClient.homeAxisAsync([3]);
+    
+    await rockhopperClient.programOpenCmd('v2_calib_probe_a_home.ngc')
+    await new Promise(r => setTimeout(r, 1000));
+    await rockhopperClient.cycleStart();
+    await rockhopperClient.waitForDoneAndIdle(1000);
+  }
+  console.log(Math.abs(calibProcess.aHomeErr))
   await rockhopperClient.programOpenCmd('v2_calib_verify_a.ngc');
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
+async function runVerifyBHoming(conn){
+  console.log('runVerifyBHoming');
+  await rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+  for(let idx = 0; idx < 5; idx++){
+    await rockhopperClient.programOpenCmd('v2_calib_probe_b_home.ngc')
+    await new Promise(r => setTimeout(r, 1000));
+    await rockhopperClient.cycleStart();
+    await rockhopperClient.waitForDoneAndIdle(1000);
+
+    if(![STATE_RUN, STATE_STEP].includes(actualState)){
+      return;
+    }
+    if(idx < 4){
+      await rockhopperClient.mdiCmdAsync("G0 B-10");
+      await rockhopperClient.unhomeAxisAsync([4]);
+      await rockhopperClient.homeAxisAsync([4]);
+    }
+  }
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.programOpenCmd('v2_calib_verify_b_homing.ngc');
+  await rockhopperClient.cycleStart();
+}
 async function runVerifyB(conn){
   console.log('runVerifyB');
+  await rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0`);
+  await new Promise(r => setTimeout(r, 1000));
+  var homingAttemptsCount = 0;
+  while(true){
+    await rockhopperClient.programOpenCmd('v2_calib_probe_b_home.ngc')
+    await new Promise(r => setTimeout(r, 1000));
+    await rockhopperClient.cycleStart();
+    await rockhopperClient.waitForDoneAndIdle(1000);
+    if(![STATE_RUN, STATE_STEP].includes(actualState)){
+      return;
+    }
+    console.log(calibProcess.bHomeErr);
+    if(Math.abs(calibProcess.bHomeErr) < 0.01){
+      break;
+    }
+    homingAttemptsCount++;
+    await rockhopperClient.mdiCmdAsync("G0 B-10");
+    await rockhopperClient.unhomeAxisAsync([4]);
+    await rockhopperClient.homeAxisAsync([4]);
+  }
+  console.log(Math.abs(calibProcess.bHomeErr))
+
   await rockhopperClient.programOpenCmd('v2_calib_verify_b.ngc');
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
-async function runWriteVerifyReport(conn){
-  console.log('runWriteVerifyReport');
-  await rockhopperClient.programOpenCmd('v2_calib_write_verify_report.ngc');
+async function runCalcVerify(conn){
+  console.log('runCalcVerify');
+  await rockhopperClient.programOpenCmd('v2_calib_calc_verify.ngc');
+  await new Promise(r => setTimeout(r, 1000));
+  await rockhopperClient.cycleStart();
+}
+async function runWriteVerify(conn){
+  console.log('runWriteVerify');
+  await rockhopperClient.programOpenCmd('v2_calib_write_verify.ngc');
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
 }
@@ -1129,6 +1283,7 @@ const STAGE_METHODS = {
   'PROBE_MACHINE_POS': runProbeMachinePos,
   'SETUP_PART_CSY': runSetupPartCsy,
   'PROBE_SPINDLE_POS': runProbeSpindlePos,
+  'PROBE_FIXTURE_BALL_POS': runProbeFixtureBallPos,
   'CHARACTERIZE_X': runCharacterizeX,
   'CHARACTERIZE_Y': runCharacterizeY,
   'CHARACTERIZE_Z': runCharacterizeZ,
@@ -1136,12 +1291,16 @@ const STAGE_METHODS = {
   'SETUP_CNC_CSY':runSetupCncCsy,
   'CHARACTERIZE_A': runCharacterizeA,
   'CHARACTERIZE_B': runCharacterizeB,
-  'WRITE_RESULTS': runWriteResults,
+  'CALC_CALIB': runCalcCalib,
+  'WRITE_CALIB': runWriteCalib,
   'RESTART_CNC': runRestartCnc,
   'SETUP_VERIFY': runSetupVerify,
   'VERIFY_A': runVerifyA,
   'VERIFY_B': runVerifyB,
-  'WRITE_VERIFY_REPORT': runWriteVerifyReport,
+  'CALC_VERIFY': runCalcVerify,
+  'WRITE_VERIFY': runWriteVerify,
+  [STAGES.VERIFY_A_HOMING]: runVerifyAHoming,
+  [STAGES.VERIFY_B_HOMING]: runVerifyBHoming,
 }
 
 var actualState = null;
@@ -1184,6 +1343,9 @@ async function cmdSetProcess(processName) {
     calibProcess.selectedProcess = processName;
   }
 }
+async function cmdSetSerial(serialNum) {
+  calibProcess.serialNum = serialNum;
+}
 async function cmdRun() {
   await setCommandedState(STATE_RUN);
   if(actualState !== STATE_RUN){
@@ -1210,6 +1372,35 @@ async function cmdStop() {
     await calibStop();
   }
 }
+async function cmdSetSkipCmm(val) {
+  await rockhopperClient.setSkipCmm(val)
+}
+async function cmdRestart() {
+  calibProcess = new CalibProcess(process_type);
+  calibProcess.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
+  // calibProcess.stages.calib[STAGES.SETUP_CNC].completed = true
+  // calibProcess.stages.calib[STAGES.SETUP_CMM].completed = true
+  // calibProcess.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true
+  // calibProcess.stages.calib[STAGES.SETUP_PART_CSY].completed = true
+  // calibProcess.stages.calib[STAGES.PROBE_SPINDLE_POS].completed = true
+  // calibProcess.stages.calib[STAGES.CHARACTERIZE_X].completed = true
+  // calibProcess.stages.calib[STAGES.CHARACTERIZE_Z].completed = true
+  // calibProcess.stages.calib[STAGES.PROBE_TOP_PLANE].completed = true
+  // calibProcess.stages.calib[STAGES.PROBE_FIXTURE_BALL_POS].completed = true
+  // calibProcess.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
+  // calibProcess.stages.calib[STAGES.SETUP_CNC_CSY].completed = true
+  // calibProcess.stages.calib[STAGES.CHARACTERIZE_A].completed = true
+  // calibProcess.stages.calib[STAGES.CHARACTERIZE_B].completed = true
+  // calibProcess.stages.calib[STAGES.CALC_CALIB].completed = true
+  // calibProcess.stages.calib[STAGES.WRITE_CALIB].completed = true
+
+  // calibProcess.stages.verify[STAGES.RESTART_CNC].completed = true
+  // calibProcess.stages.verify[STAGES.SETUP_CNC].completed = true
+  // calibProcess.stages.verify[STAGES.SETUP_CMM].completed = true
+  // calibProcess.stages.verify[STAGES.SETUP_VERIFY].completed = true
+  // calibProcess.stages.verify[STAGES.VERIFY_A].completed = true
+  // calibProcess.stages.verify[STAGES.VERIFY_B].completed = true
+}
 
 
 const commands = {
@@ -1225,6 +1416,9 @@ const commands = {
   cmdStep,
   cmdPause,
   cmdStop,
+  cmdSetSkipCmm,
+  cmdRestart,
+  cmdSetSerial,
 };
 
 
@@ -1414,12 +1608,10 @@ calibSocket.on("message", async function(msg) {
   console.log("Received ZMQ msg from Calib manager: %s", msg.toString());
   var calibManagerReport = JSON.parse(msg);
 
-  const data = await getCalibStatus();
-  if(uiConnection){
-    uiConnection.send(JSON.stringify({ ['getCalibStatus']: data }));
-  }
-
-
+  calibProcess.skipCmm = calibManagerReport.skip_cmm;
+  calibProcess.status = calibManagerReport.status;
+  calibProcess.bHomeErr = calibManagerReport.b_home_err;
+  calibProcess.aHomeErr = calibManagerReport.a_home_err;
 
   if(calibManagerReport.why === MSG_WHY_STEP_COMPLETE){
     if(calibManagerReport.stage_completed){
@@ -1449,6 +1641,10 @@ calibSocket.on("message", async function(msg) {
     actualState = STATE_FAIL
   }
 
+  const data = await getCalibStatus();
+  if(uiConnection){
+    uiConnection.send(JSON.stringify({ ['getCalibStatus']: data }));
+  }
 });
 
 connectCalib();
