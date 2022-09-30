@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "node-gyp": "^9.1.0",
+    "to-camel-case": "^1.0.0",
     "websocket": "^1.0.34",
     "ws": "^8.8.1",
     "zeromq": "^5.2.8"
