@@ -1,10 +1,19 @@
-const { WebSocketServer } = require('ws');
-var WebSocketClient = require('websocket').client;
-const zmq = require("zeromq");
+// Log to file and to stdout
+//
+const logFile = fs.createWriteStream('/var/log/penta/calib-service.log', { flags: 'a' });
+const logStdout = process.stdout;
+
+console.log = function() {
+  logFile.write(util.format.apply(null, arguments) + "\n");
+  logStdout.write(util.format.apply(null, arguments) + "\n");
+}
+console.error = console.log;
+
 const util = require("util");
 const { exec } = require("child_process");
 const execPromise = util.promisify(exec);
 const fs = require('fs');
+
 
 var process_type = null;
 process.argv.forEach(function (val, index, array) {
@@ -20,21 +29,8 @@ WebSocketClient for communication with Rockhopper
 ZeroMQ for communication with Calibration process
 */
 
-const { getServiceStatus,
-  shutdownServices } = require('./services');
-
-const {
-  //getCalibStatus,
-  loadCalibProgress,
-  runStep
-} = require('./calib');
-
-function camelize(str) {
-  return str.toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g, (m, chr) => chr.toUpperCase());
-}
-
-const PENTA_VAR_DIR = "/var/opt/pocketnc/";
-const CALIB_DIR = PENTA_VAR_DIR + "calib/";
+const POCKETNC_VAR_DIRECTORY = process.env.POCKETNC_VAR_DIRECTORY;
+const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 
 const STAGES = {
   ERASE_COMPENSATION: 'ERASE_COMPENSATION',
@@ -133,313 +129,13 @@ const VERIFY_ORDER = [
   STAGES.WRITE_VERIFY,
 ]
 
-const A_COMP_PATH = '/var/opt/pocketnc/a.comp';
-const B_COMP_PATH = '/var/opt/pocketnc/b.comp';
+const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
+const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
 
 const Y_POS_PROBING = -63;
 
 //------GLOBALS------
-class RockhopperClient {
-  constructor() {
-    var self = this;
-    this.callbacks = {}
-    this.state = {};
 
-    this.connected = false;
-    this.intervalConnect = false;
-
-    this.client = new WebSocketClient();
-    this.socket = undefined;
-    // this.socket.addEventListener("message", (data) => {
-    //   const msg = JSON.parse(data);
-
-    //   if(this.callbacks[id]) {
-    //     this.callbacks[id](msg);
-    //   }
-    // });
-  }
-
-
-  genCommandPromise = (id, data) => {
-    return new Promise((resolve, reject) => {
-      const callback = (msg) => {
-        switch(msg.code){
-          case('?OK'):
-            resolve();
-          case('?ACK'):
-            //skip
-          case('?ERROR'):
-            reject();
-        }
-      };
-      this.registerCallback(id, callback);
-      this.send(data);
-    });
-  }
-  runIntervalConnect() {
-    console.log('runIntervalConnect')
-    console.log(this.intervalConnect)
-    if(this.intervalConnect !== false) { return }
-    this.intervalConnect = setInterval(this.connect, 5000)
-  }
-  stopIntervalConnect() {
-    if(this.intervalConnect === false) return
-    clearInterval(this.intervalConnect)
-    this.intervalConnect = false
-  }
-  connect = async () => {
-    this.client.on('connectFailed', (error) => {
-        this.connected = false;
-        this.socket = undefined;
-        if(this.intervalConnect === false){
-          this.runIntervalConnect();
-        }
-        console.log('Rockhopper Connect Error: ' + error.toString());
-      }
-    );
-    this.client.on('connect', (socket) => { //function(socket) {
-      this.connected = true;
-      this.socket = socket;
-      this.stopIntervalConnect();
-      console.log('Rockhopper Connection established!');
-      socket.send(JSON.stringify({id: "LOGIN_ID", user: "default", password: 'default', date: new Date(),}));
-      socket.send(JSON.stringify({id: "WATCH_INTERP_STATE", name: "interp_state", command:"watch"}));
-      socket.send(JSON.stringify({id: "WATCH_STATE", name: "state", command:"watch"}));
-      socket.send(JSON.stringify({id: "WATCH_HOMED", name: "homed", command:"watch"}));
-
-
-      socket.on('error', (error) => {
-        this.connected = false;
-        // this.runIntervalConnect();
-        console.log("Rockhopper Connection error: " + error.toString());
-      });
-      socket.on('close', () => {
-        this.connected = false;
-        this.connection = undefined;
-        this.runIntervalConnect();
-        console.log('Rockhopper Connection closed!');
-      });
-      socket.on('message', (data) => {
-        const msg = JSON.parse(data.utf8Data);
-        if(this.callbacks[msg.id]){
-          this.callbacks[msg.id](msg);
-        }
-        switch(msg.id){
-          case('WATCH_INTERP_STATE'):
-            this.state.interpState = msg.data
-          case('WATCH_STATE'):
-            this.state.state = msg.data
-          case('WATCH_HOMED'):
-            var axesHomed = 0;
-            for(let idx = 0; idx < 6; idx++){
-              axesHomed += msg.data[idx];
-            }
-            if(axesHomed === 5){
-              this.state.homed = true;
-            }
-            else { this.state.homed = false; }
-          default:
-            break;
-        }
-      });
-    })
-    this.client.connect('ws://localhost:8000/websocket/');
-  }
-
-  registerCallback(id, callback) {
-    this.callbacks[id] = callback;
-  }
-  unregisterCallback(id) {
-    delete this.callbacks[id];
-  }
-
-  send(msg) {
-    this.socket.send(msg);
-  }
-
-  async getSocket() {
-    if(this.socket){
-      return this.socket;
-    }
-    await this.connect();
-    return this.socket;
-  }
-
-  waitForDoneAndIdle = async (initialTimeout) => {
-    if(initialTimeout){
-      await new Promise(r => setTimeout(r, initialTimeout));
-    }
-    while(true){
-      await new Promise(r => setTimeout(r, 100));
-      if(this.state.state === 1 && this.state.interpState === 1){ console.log('done and idle'); break; }
-    }
-  }
-  estopCmdAsync = async (val) => {
-    this.send(
-      JSON.stringify(
-        {
-          "0":val,
-          "id":"PUT_ESTOP_CMD_ASYNC",
-          "name":"estop_cmd_async",
-          "command":"put",
-        }
-      )
-    )
-  }
-  programOpenCmd = (filename) => {
-    this.send(
-      JSON.stringify(
-        {
-          "0":filename,
-          "1":"PROGRAM",
-          "id":"PUT_PROGRAM_OPEN_CMD",
-          "name":"program_open_cmd",
-          "command":"put",
-        }
-      )
-    )
-  }
-  cycleStart = () => {
-    this.send(
-      JSON.stringify(
-        {
-          "id":"PUT_CYCLE_START_CMD",
-          "name":"cycle_start_cmd",
-          "command":"put",
-        }
-      )
-    )
-  }
-  restartServices = () => {
-    this.send(
-      JSON.stringify(
-        {
-          "id":"PUT_RESTART",
-          "name":"restart",
-          "command":"put",
-        }
-      )
-    )
-  }
-  mdiCmdAsync = async (cmd) => {
-    const id = "PUT_MDI_CMD_ASYNC_" + Date.now();
-    const data = JSON.stringify(
-      {
-        "0": cmd,
-        "id": id,
-        "name":"mdi_cmd_async",
-        "command":"put",
-      }
-    )
-    return this.genCommandPromise(id,data)
-    // new Promise((resolve, reject) => {
-    //   const callback = (msg) => {
-    //     console.log(msg)
-    //     switch(msg.code){
-    //       case('?OK'):
-    //         resolve();
-    //       case('?ACK'):
-    //         //skip
-    //       case('?ERROR'):
-    //         reject();
-    //     }
-    //   };
-    //   this.registerCallback(id, callback);
-    //   this.send(data);
-    // });
-  }
-  homeAxisAsync = async (axisIndex) => {
-    const id = "PUT_HOME_CMD_ASYNC_" + Date.now();
-    const data = JSON.stringify(
-      {
-        "0": axisIndex,
-        "id": id,
-        "name":"home_cmd_async",
-        "command":"put",
-      }
-    )
-    return this.genCommandPromise(id,data)
-
-    // return new Promise((resolve, reject) => {
-    //   const callback = (msg) => {
-    //     console.log(msg)
-    //     if(msg.ack){
-    //       // if this message is acknowlegment, skip it
-    //     }
-    //     // if this message is completed, then resolve
-    //     // if this message indicates error, then reject
-    //   };
-    //   this.registerCallback(id, callback);
-    //   this.send(data);
-    // });
-  }
-  unhomeAxisAsync = async (axisIndex) => {
-    console.log('unhomeAxisAsync');
-    const id = "PUT_UNHOME_CMD_ASYNC_" + Date.now();
-    const data = JSON.stringify(
-      {
-        "0": axisIndex,
-        "id": id,
-        "name":"unhome_cmd_async",
-        "command":"put",
-      }
-    )
-    return this.genCommandPromise(id,data)
-
-    // return new Promise((resolve, reject) => {
-    //   const callback = (msg) => {
-    //     console.log(msg)
-    //     if(msg.ack){
-    //       // if this message is acknowlegment, skip it
-    //     }
-    //     // if this message is completed, then resolve
-    //     // if this message indicates error, then reject
-    //   };
-    //   this.registerCallback(id, callback);
-    //   this.send(data);
-    // });
-  }
-  teleopEnable = async (teleopVal) => {
-    this.send(
-      JSON.stringify(
-        {
-          "0": teleopVal,
-          "id":"PUT_TELEOP_ENABLE",
-          "name":"teleop_enable",
-          "command":"put",
-        }
-      )
-    )
-  }
-  loadStageProgress = async (stage) => {
-    this.send(
-      JSON.stringify(
-        {
-          "0": "o<v2_calib_load_stage_" + stage.toLowerCase() + "> call",
-          "id":"PUT_MDI_CMD",
-          "name":"mdi_cmd",
-          "command":"put",
-        }
-      )
-    )
-  }
-  setSkipCmm = async (val) => {
-    const paramVal = val === true ? 1 : 0;
-    this.send(
-      JSON.stringify(
-        {
-          "0": `o<cmm_set_skip_cmm> call [${paramVal}]`,
-          "id":"PUT_MDI_CMD",
-          "name":"mdi_cmd",
-          "command":"put",
-        }
-      )
-    )
-  }
-}
-
-rockhopperClient = new RockhopperClient();
-rockhopperClient.connect();
 
 
 class CalibProcess {
@@ -459,8 +155,6 @@ class CalibProcess {
 
     this.rockhopperConnected, this.intervalConnectRockhopper = false;
     this.rockhopperClient, this.rockhopperConnection = undefined;
-
-    this.calibSocket, this.calibConnection = undefined;
 
     this.uiConnected = false;
     this.uiConnection = undefined;
@@ -728,7 +422,7 @@ async function startNextStage() {
 }
 
 function checkSaveFileExists(stage) {
-  filename = CALIB_DIR + "Stages." + stage.toUpperCase();
+  filename = CALIB_DIR + "/Stages." + stage.toUpperCase();
   if (fs.existsSync(filename)) {
     return true;
   }
@@ -801,9 +495,6 @@ async function readCompensationFiles() {
 async function clearCompensationFiles() {
   fs.writeFileSync(A_COMP_PATH, "");
   fs.writeFileSync(B_COMP_PATH, "");
-}
-async function getCalibStatus() {
-  return calibProcess;
 }
 async function feedHold(rockhopperConnection){
   rockhopperConnection.send(
@@ -908,30 +599,11 @@ async function runCharacterizeX(){
     await rockhopperClient.cycleStart();
     await rockhopperClient.waitForDoneAndIdle(1000);
 
-    // await waitForDoneAndIdle(0);
-    // await performTeleopEnable(conn, true);
-    // await new Promise(r => setTimeout(r, 1000));
-    // await performMdiCmd(conn, "G0 X60" );
-    // await waitForDoneAndIdle(1000);
-    // await performUnhomeAxis(conn, 0);
-    // await waitForUnhomed(1000);
-    // await new Promise(r => setTimeout(r, 1000));
-    // await rockhopperClient.homeAxis(0)
-    // await performHomeAxis(conn, [0]);
-    // await waitForHomed(1000);
-    // await waitForDoneAndIdle(1000);
-    // await new Promise(r => setTimeout(r, 2000));
-
-    // await programOpen(conn, 'v2_calib_probe_x_home.ngc')
-    // await new Promise(r => setTimeout(r, 1000));
-    // await cycleStart(conn);
-    // await waitForDoneAndIdle(1000);
     if(![STATE_RUN, STATE_STEP].includes(actualState)){
       return;
     }
   }
-  // await rockhopperClient.performTeleopEnable(true);
-  // await new Promise(r => setTimeout(r, 1000));
+
   await rockhopperClient.programOpenCmd('v2_calib_verify_x_home.ngc');
   await new Promise(r => setTimeout(r, 1000));
   await rockhopperClient.cycleStart();
@@ -1267,15 +939,6 @@ async function runWriteVerify(conn){
   await rockhopperClient.cycleStart();
 }
 
-// const STAGE_METHODS = {}
-// Object.keys(STAGES).forEach(stage => {
-//   const camelName = camelize(stage);
-//   const capsCamelName = camelName.charAt(0).toUpperCase() + camelName.slice(1);
-//   console.log(capsCamelName)
-//   STAGE_METHODS[stage] = this['run' + capsCamelName];
-// })
-// console.log(STAGE_METHODS)
-
 const STAGE_METHODS = {
   'ERASE_COMPENSATION': runEraseCompensation,
   'SETUP_CNC': runSetupCnc,
@@ -1336,21 +999,8 @@ async function changeState(newState){
 }
 
 
-async function cmdSetProcess(processName) {
-  console.log(processName)
-  if(!calibProcess.begun && [PROCESS_NEW, PROCESS_RESUME, PROCESS_VERIFY].includes(processName)){
-    console.log(processName)
-    calibProcess.selectedProcess = processName;
-  }
-}
 async function cmdSetSerial(serialNum) {
   calibProcess.serialNum = serialNum;
-}
-async function cmdRun() {
-  await setCommandedState(STATE_RUN);
-  if(actualState !== STATE_RUN){
-    await runCalib();
-  }
 }
 async function cmdStep() {
   await setCommandedState(STATE_STEP);
@@ -1401,275 +1051,3 @@ async function cmdRestart() {
   // calibProcess.stages.verify[STAGES.VERIFY_A].completed = true
   // calibProcess.stages.verify[STAGES.VERIFY_B].completed = true
 }
-
-
-const commands = {
-  getServiceStatus,
-
-  getCalibStatus,
-
-  loadCalibProgress,
-  runStep,
-
-  cmdSetProcess,
-  cmdRun,
-  cmdStep,
-  cmdPause,
-  cmdStop,
-  cmdSetSkipCmm,
-  cmdRestart,
-  cmdSetSerial,
-};
-
-
-
-/*-----------------------------------------------------------------------------*
-                                  UI WebSocket
- *-----------------------------------------------------------------------------*/
-var uiConnection;
-const wss = new WebSocketServer({ port: 8081 });
-
-wss.on('connection', function connection(ws) {
-  uiConnection = ws;
-  ws.on('message', async function incoming(data) {
-    let msg;
-    try {
-      msg = JSON.parse(data);
-      console.log("Message from UI");
-      console.log(msg);
-      if(Array.isArray(msg)) {
-        if(msg.length <= 0 || !commands[msg[0]]) {
-          throw "Unknown command from UI.";
-        }
-      } else {
-        throw "Command from UI must be an array.";
-      }
-    } catch(e) {
-      ws.send(JSON.stringify({ error: "" + e }));
-      return;
-    }
-    try {
-      const data = await commands[msg[0]].apply(null, msg.slice(1));
-      // console.log(data)
-      ws.send(JSON.stringify({ [msg[0]]: data }));
-
-    } catch(e) {
-      console.log('error running UI command')
-      console.log(e)
-      ws.send(JSON.stringify({ [msg[0]]: { error: "" + (e.stderr || e) }}));
-    }
-  });
-});
-
-
-
-/*-----------------------------------------------------------------------------*
-                              Rockhopper WebSocket
- *-----------------------------------------------------------------------------*/
-// var rockhopperConnection;
-// var rockhopperClient = new WebSocketClient();
-// var intervalConnectRockhopper = false;
-// var rockhopperConnected = false;
-
-// async function connectRockhopper() {
-//   rockhopperConnected = false;
-//   rockhopperClient.connect('ws://localhost:8000/websocket/');
-// }
-
-// function runIntervalConnectRockhopper() {
-//   if(intervalConnectRockhopper !== false) { return }
-//   intervalConnectRockhopper = setInterval(connectRockhopper, 3000)
-// }
-
-// function stopIntervalConnectRockhopper() {
-//   if(intervalConnectRockhopper === false) return
-//   clearInterval(intervalConnectRockhopper)
-//   intervalConnectRockhopper = false
-// }
-
-// rockhopperClient.on('connectFailed', function(error) {
-//   rockhopperConnected = false;
-//   runIntervalConnectRockhopper();
-//   console.log('Rockhopper Connect Error: ' + error.toString());
-// });
-
-
-// rockhopperClient.on('connect', function(connection) {
-//   rockhopperConnected = true;
-//   stopIntervalConnectRockhopper();
-//   console.log('Rockhopper Connection established!');
-//   connection.send(JSON.stringify({id: "LOGIN_ID", user: "default", password: 'default', date: new Date(),}));
-//   connection.send(JSON.stringify({id: "WATCH_INTERP_STATE", name: "interp_state", command:"watch"}));
-//   connection.send(JSON.stringify({id: "WATCH_STATE", name: "state", command:"watch"}));
-//   connection.send(JSON.stringify({id: "WATCH_HOMED", name: "homed", command:"watch"}));
-
-//   rockhopperConnection = connection;
-
-//   connection.on('error', function(error) {
-//     rockhopperConnected = false;
-//     runIntervalConnectRockhopper();
-//     console.log("Rockhopper Connection error: " + error.toString());
-//   });
-
-//   connection.on('close', function() {
-//     rockhopperConnected = false;
-//     runIntervalConnectRockhopper();
-//     console.log('Rockhopper Connection closed!');
-//   });
-
-//   connection.on('message', function(message) {
-//     rockhopperMessage = JSON.parse(message.utf8Data);
-//     console.log(rockhopperMessage);
-
-//     if(rockhopperMessage.id === 'WATCH_INTERP_STATE'){
-//       //EMC_TASK_INTERP_IDLE = 1,EMC_TASK_INTERP_READING = 2,EMC_TASK_INTERP_PAUSED = 3,EMC_TASK_INTERP_WAITING = 4
-//       var interpStateVal = rockhopperMessage.data;
-//       console.log('WATCH_INTERP_STATE ' + interpStateVal)
-//       switch(interpStateVal){
-//         case(1):
-//           interpIdle = true;
-//           break;
-//         default:
-//           interpIdle = false;
-//           break;
-//       }
-//     }
-//     else if(rockhopperMessage.id === 'WATCH_STATE'){
-//       var execStateVal = rockhopperMessage.data;
-//       console.log('WATCH_STATE ' + execStateVal)
-//       switch(execStateVal){
-//         case(1):
-//           execStateDone = true;
-//           break;
-//         default:
-//           execStateDone = false;
-//           break;
-//       }
-//     }
-//     else if(rockhopperMessage.id === 'WATCH_HOMED'){
-//       //EMC_TASK_INTERP_IDLE = 1,EMC_TASK_INTERP_READING = 2,EMC_TASK_INTERP_PAUSED = 3,EMC_TASK_INTERP_WAITING = 4
-
-//       var homedData = rockhopperMessage.data;
-//       var axesHomed = 0;
-//       for(let idx = 0; idx < 6; idx++){
-//         axesHomed += homedData[idx];
-//       }
-//       if(axesHomed === 5){
-//         homed = true;
-//       }
-//       else { homed = false; }
-//     }
-//     else if(rockhopperMessage.id === 'PUT_HOME_CMD_ASYNC'){
-
-//     }
-//   });
-// });
-
-// connectRockhopper();
-
-
-
-/*-----------------------------------------------------------------------------*
-                              CalibManager ZMQ
- *-----------------------------------------------------------------------------*/
-var calibConnection;
-var calibSocket = zmq.socket("pull");
-
-var intervalConnectCalib = false;
-
-async function connectCalib() {
-  console.log('attempting connect calib')
-  calibSocket.connect('ipc:///tmp/cmm');
-}
-
-function runIntervalConnectCalib() {
-  if(intervalConnectCalib !== false) { return; }
-  intervalConnectCalib = setInterval(connectCalib, 3000)
-}
-
-function stopIntervalConnectCalib() {
-  if(intervalConnectCalib === false) { return; }
-  clearInterval(intervalConnectCalib);
-  intervalConnectCalib = false;
-}
-
-calibSocket.on('connectFailed', function(error) {
-  runIntervalConnectCalib();
-  console.log('Calib Connect Error: ' + error.toString());
-});
-
-calibSocket.on('connect', function(connection) {
-  stopIntervalConnectCalib();
-  console.log('Calib Connection established!');
-});
-
-
-calibSocket.on("message", async function(msg) {
-  console.log("Received ZMQ msg from Calib manager: %s", msg.toString());
-  var calibManagerReport = JSON.parse(msg);
-
-  calibProcess.skipCmm = calibManagerReport.skip_cmm;
-  calibProcess.status = calibManagerReport.status;
-  calibProcess.bHomeErr = calibManagerReport.b_home_err;
-  calibProcess.aHomeErr = calibManagerReport.a_home_err;
-
-  if(calibManagerReport.why === MSG_WHY_STEP_COMPLETE){
-    if(calibManagerReport.stage_completed){
-      calibProcess.stages[calibProcess.currentMode][calibManagerReport.stage].completed = true;
-    }
-    if(calibManagerReport.state == STATE_IDLE){
-      if(commandedState === STATE_RUN){
-        await runCalib();
-      }
-      else if(commandedState === STATE_STEP){
-        actualState = STATE_IDLE
-      }
-    }
-    else{
-      console.log('step completed but not advancing because not idle');
-    }
-  }
-  else if(calibManagerReport.why === MSG_WHY_UPDATE){
-
-  }
-  else if(calibManagerReport.why === MSG_WHY_ERROR){
-    calibProcess.stages[calibProcess.currentMode][calibProcess.currentStage].error = true;
-    actualState = STATE_ERROR
-  }
-  else if(calibManagerReport.why === MSG_WHY_FAIL){
-    calibProcess.stages[calibProcess.currentMode][calibProcess.currentStage].error = true;
-    actualState = STATE_FAIL
-  }
-
-  const data = await getCalibStatus();
-  if(uiConnection){
-    uiConnection.send(JSON.stringify({ ['getCalibStatus']: data }));
-  }
-});
-
-connectCalib();
-
-// calibManagerSocket.connect("tcp://127.0.0.1:5555");
-// console.log("calibManagerSocket connected to port 5555");
-
-// calibManagerSocket.on("message", async function(msg) {
-//   console.log("Received ZMQ msg from Calib manager: %s", msg.toString());
-//   var calibManagerStatus = JSON.parse(msg);
-//   calibStatus.stages = calibManagerStatus.stages;
-//   calibStatus.status = calibManagerStatus.status;
-
-//   actualState = calibManagerStatus.state;
-
-//   if(calibManagerStatus.why === MSG_WHY_STEP_COMPLETE){
-//     if(commandedState === STATE_RUN && actualState == STATE_IDLE){
-//       await runCalib();
-//     }
-//   }
-//   else if(calibManagerStatus.why === MSG_WHY_UPDATE){
-
-//   }
-//   else if(calibManagerStatus.why === MSG_WHY_ERROR){
-
-//   }
-
-// });
