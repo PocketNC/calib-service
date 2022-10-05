@@ -1,9 +1,6 @@
 const { WebSocketServer } = require('ws');
 const { getServiceStatus } = require('./services');
 
-async function getCalibStatus() {
-  return this.calibProcess;
-}
 
 async function cmdSetProcess(processName) {
   console.log(processName)
@@ -13,41 +10,49 @@ async function cmdSetProcess(processName) {
   }
 }
 
-async function cmdRun() {
-  await setCommandedState(STATE_RUN);
-  if(actualState !== STATE_RUN){
-    await runCalib();
-  }
+async function cmdStep(calibProcess) {
+  console.log('in cmdStep')
+  // console.log('args' + args)
+  console.log(calibProcess)
+  calibProcess.cmdStep.apply(calibProcess)
 }
 
 
+
+
 class CommandServer {
-  constructor({ 
-    rockhopperClient,
+  constructor(
+    // rockhopperClient,
     calibProcess
-  }) {
+  ) {
     this.wss = new WebSocketServer({ port: 8081 });
     this.connections = [];
+    this.calibProcess = calibProcess;
     this.commands = {
       getServiceStatus,
-      getCalibStatus,
+
+      cmdRun: this.cmdRun,
+      cmdStep: this.cmdStep,
+
       cmdSetProcess,
-      cmdRun,
-      cmdStep,
-      cmdPause,
-      cmdStop,
-      cmdSetSkipCmm,
-      cmdRestart,
-      cmdSetSerial,
+      // cmdSetSkipCmm,
+      // cmdRestart,
+      // cmdSetSerial,
+    }
+    this.processCommands = {
+      'cmdRun': calibProcess.cmdRun,
+      'cmdStep': calibProcess.cmdStep,
+      'cmdPause': calibProcess.cmdPause,
+      'cmdStop': calibProcess.cmdStop,
+      'cmdGetStatus': calibProcess.getStatus,
     };
 
-    this.rockhopperClient = rockhopperClient;
-    this.calibProcess = calibProcess;
+    this.wss.on('connection', (ws) => {
+      console.log('this.commandServer.connections')
+      console.log(this.connections)
+      this.connections.push(ws);
 
-    wss.on('connection', function connection(ws) {
-      this.connections.append(ws);
-
-      ws.on('close', function(reasonCode, description) {
+      ws.on('close', (reasonCode, description) => {
         console.log("Closing connection");
         const index = this.connections.indexOf(ws);
         if(index > -1) {
@@ -57,26 +62,41 @@ class CommandServer {
         }
       });
 
-      ws.on('message', async function incoming(data) {
+      ws.on('message', async (data) => {
         let msg;
         try {
           msg = JSON.parse(data);
           console.log("Message from UI");
           console.log(msg);
           if(Array.isArray(msg)) {
-            if(msg.length <= 0 || !commands[msg[0]]) {
+            console.log("Message is array");
+            if(msg.length <= 0 || !( this.commands[msg[0]] || this.processCommands[msg[0]] )) {
+              console.log("Message unknown");
               throw "Unknown command from UI.";
             }
           } else {
             throw "Command from UI must be an array.";
           }
         } catch(e) {
+          console.log(e)
+          console.log("error? sending response");
           ws.send(JSON.stringify({ error: "" + e }));
           return;
         }
+        console.log('tried 1')
         try {
-          const data = await commands[msg[0]].apply(this, msg.slice(1));
-          // console.log(data)
+          console.log("Command found, running")
+          var data;
+          if(this.commands[msg[0]]){
+            data = await this.commands[msg[0]].apply(this, msg.slice(1));
+          }
+          else if(this.processCommands[msg[0]]){
+            data = await this.processCommands[msg[0]].apply(this.calibProcess, msg.slice(1));
+          }
+          else{
+            console.log('somethings wrong')
+          }
+          console.log(data)
           ws.send(JSON.stringify({ [msg[0]]: data }));
 
         } catch(e) {
@@ -88,6 +108,16 @@ class CommandServer {
     });
   }
 
+  cmdStep() {
+    this.calibProcess.cmdStep(...arguments);
+  }
+  cmdRun() {
+    this.calibProcess.cmdRun(...arguments);
+  }
+  getCalibStatus() {
+    console.log('getCalibStatus')
+    return this.calibProcess;
+  }
   send(msg) {
     this.connections.forEach((ws) => {
       ws.send(JSON.stringify(msg));

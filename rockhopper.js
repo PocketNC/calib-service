@@ -24,6 +24,9 @@ class RockhopperClient {
       console.log('Rockhopper Connection established!');
 
       socket.send(JSON.stringify({id: "LOGIN_ID", user: "default", password: 'default', date: new Date(),}));
+      socket.send(JSON.stringify({id: "WATCH_INTERP_STATE", name: "interp_state", command:"watch"}));
+      socket.send(JSON.stringify({id: "WATCH_STATE", name: "state", command:"watch"}));
+      socket.send(JSON.stringify({id: "WATCH_HOMED", name: "homed", command:"watch"}));
 
       socket.on('error', (error) => {
         this.connected = false;
@@ -40,6 +43,23 @@ class RockhopperClient {
         if(this.callbacks[msg.id]){
           this.callbacks[msg.id](msg);
         }
+        switch(msg.id){
+          case('WATCH_INTERP_STATE'):
+            this.state.interpState = msg.data
+          case('WATCH_STATE'):
+            this.state.state = msg.data
+          case('WATCH_HOMED'):
+            var axesHomed = 0;
+            for(let idx = 0; idx < 6; idx++){
+              axesHomed += msg.data[idx];
+            }
+            if(axesHomed === 5){
+              this.state.homed = true;
+            }
+            else { this.state.homed = false; }
+          default:
+            break;
+        }
       });
     });
   }
@@ -49,12 +69,12 @@ class RockhopperClient {
       const callback = (msg) => {
         switch(msg.code){
           case('?OK'):
-            this.unregisterCallback(id);
+            this.unregisterCallback(msg.id);
             resolve();
           case('?ACK'):
             //skip
           case('?ERROR'):
-            this.unregisterCallback(id);
+            this.unregisterCallback(msg.id);
             reject();
         }
       };
@@ -78,6 +98,17 @@ class RockhopperClient {
   send(msg) {
     this.socket.send(msg);
   }
+  
+  waitForDoneAndIdle = async (initialTimeout) => {
+    console.log(this.state)
+    if(initialTimeout){
+      await new Promise(r => setTimeout(r, initialTimeout));
+    }
+    while(true){
+      await new Promise(r => setTimeout(r, 100));
+      if(this.state.state === 1 && this.state.interpState === 1){ console.log('done and idle'); break; }
+    }
+  }
 
   estopCmdAsync = async (val) => {
     this.send(
@@ -90,6 +121,15 @@ class RockhopperClient {
         }
       )
     )
+  }
+
+  runToCompletion = (axisIndex) => {
+    const id = "PUT_RUN_TO_COMPLETION" + Date.now();
+    return this.genCommandPromise({
+      "id": id,
+      "name":"run_to_completion",
+      "command":"put",
+    });
   }
 
   programOpenCmd = (filename) => {
