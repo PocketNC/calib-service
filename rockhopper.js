@@ -123,9 +123,11 @@ class RockhopperClient {
     )
   }
 
-  runToCompletion = (axisIndex) => {
-    const id = "PUT_RUN_TO_COMPLETION" + Date.now();
+  runToCompletion = (filename) => {
+    const id = "PUT_RUN_TO_COMPLETION_" + Date.now();
     return this.genCommandPromise({
+      "0":filename,
+      "1":"PROGRAM",
       "id": id,
       "name":"run_to_completion",
       "command":"put",
