@@ -44,7 +44,7 @@ async function pingCmmLoop() {
       lastCmmPing = Date.now();
       cmmPingSuccesful = true;
       calibProcess.cmmConnected = true;
-      console.log('cmm connected')
+      // console.log('cmm connected')
     } catch(e) {
       // console.log(e)
 
@@ -77,88 +77,27 @@ var commandServer = new CommandServer(calibProcess);
 var calibManagerWorker = new CalibManagerWorker(calibProcess);
 calibManagerWorker.connect();
 
-pingCmmLoop();
-// setTimeout(pingCmm, 4000);
-
-async function runCalib() {
-  if(actualState !== STATE_ERROR){
-    actualState = STATE_RUN;
-    await startNextStage();
-  }
-}
-async function stepCalib() {
-  actualState = STATE_STEP;
-  await startNextStage();
-}
-async function pauseCalib() {
-  actualState = STATE_PAUSE;
-  await feedHold();
-}
-
-
-var actualState = null;
-var commandedState = null;
-
-async function setCommandedState(newCommandedState){
-  if(['RUN', 'PAUSE', 'STOP'].includes(newCommandedState)){
-    commandedState = newCommandedState;
-  }
-}
-
-async function changeState(newState){
-  switch(newState){
-    case STATE_RUN:
-      await runCalib();
+async function startup() {
+  while(true){
+    await new Promise(r => setTimeout(r, 1000));
+    console.log('waiting for connections')
+    console.log(commandServer.connections.length)
+    console.log(calibManagerWorker.connected)
+    if(commandServer.isConnected() && calibProcess.rockhopperClient.connected){
       break;
-    case STATE_PAUSE:
-      await calibPause();
-      break;
-    case STATE_STOP:
-      await calibStop();
-      break;
+    }
   }
-
-  if(commandedState == STATE_RUN){
-  }
-  else if(commandedState == STATE_RUN){
-    await runCalibNextStage()
-  }
-  if(commandedState == STATE_RUN){
-    await runCalibNextStage()
-  }
+  await calibProcess.cmdRun()
 }
 
 
-async function cmdSetSerial(serialNum) {
-  calibProcess.serialNum = serialNum;
+function main() {
+  pingCmmLoop();
+  startup();
 }
-async function cmdStep() {
-  await setCommandedState(STATE_STEP);
 
-  if(actualState !== STATE_RUN){
+main()
 
-    await stepCalib();
-  }
-}
-async function cmdPause() {
-  await setCommandedState(STATE_PAUSE);
-  if(actualState !== STATE_PAUSE){
-    await pauseCalib();
-  }
-}
-async function cmdStop() {
-  await setCommandedState(STATE_STOP);
-  if(actualState !== STATE_STOP){
-    await calibStop();
-  }
-}
-async function cmdSetSkipCmm(val) {
-  await rockhopperClient.setSkipCmm(val)
-}
-async function cmdRestart() {
-  calibProcess = new CalibProcess(process_type);
-  calibProcess.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
-}
 
 console.log("starting with process type " + process_type);
 
