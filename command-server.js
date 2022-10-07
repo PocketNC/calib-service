@@ -96,7 +96,6 @@ class CommandServer {
           else{
             console.log('somethings wrong')
           }
-          console.log(data)
           ws.send(JSON.stringify({ [msg[0]]: data }));
 
         } catch(e) {
@@ -108,6 +107,9 @@ class CommandServer {
     });
   }
 
+  isConnected() {
+    return (this.connections.length > 0)
+  }
   cmdStep() {
     this.calibProcess.cmdStep(...arguments);
   }

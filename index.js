@@ -18,11 +18,11 @@ const { CalibProcess } = require('./calib');
 const { CommandServer } = require('./command-server');
 const { CalibManagerWorker } = require('./calib-manager-worker');
 
-var process_type = null;
+var serial_num = null;
 process.argv.forEach(function (val, index, array) {
   console.log(index + ': ' + val);
   if(index === 2){
-    process_type = val;
+    serial_num = val;
   }
 });
 
@@ -72,7 +72,7 @@ async function pingCmm() {
     lastCmmPing = cmmPing;
 }
 
-var calibProcess = new CalibProcess(process_type);
+var calibProcess = new CalibProcess(serial_num);
 var commandServer = new CommandServer(calibProcess);
 var calibManagerWorker = new CalibManagerWorker(calibProcess);
 calibManagerWorker.connect();
@@ -80,9 +80,6 @@ calibManagerWorker.connect();
 async function startup() {
   while(true){
     await new Promise(r => setTimeout(r, 1000));
-    console.log('waiting for connections')
-    console.log(commandServer.connections.length)
-    console.log(calibManagerWorker.connected)
     if(commandServer.isConnected() && calibProcess.rockhopperClient.connected){
       break;
     }
@@ -98,7 +95,5 @@ function main() {
 
 main()
 
-
-console.log("starting with process type " + process_type);
-
+console.log("starting, serial num " + serial_num);
 
