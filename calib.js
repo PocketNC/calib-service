@@ -11,7 +11,7 @@ const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 
 const STAGES = {
   ERASE_COMPENSATION: 'ERASE_COMPENSATION',
-  SETUP_CNC: 'SETUP_CNC',
+  SETUP_CNC_CALIB: 'SETUP_CNC_CALIB',
   SETUP_CMM: 'SETUP_CMM',
   PROBE_MACHINE_POS: 'PROBE_MACHINE_POS',
   SETUP_PART_CSY: 'SETUP_PART_CSY',
@@ -33,6 +33,7 @@ const STAGES = {
   WRITE_CALIB: 'WRITE_CALIB',
   //verification-only stages
   RESTART_CNC: 'RESTART_CNC',
+  SETUP_CNC_VERIFY: 'SETUP_CNC_VERIFY',
   SETUP_VERIFY: 'SETUP_VERIFY',
   // VERIFY_A_HOMING: 'VERIFY_A_HOMING',
   // VERIFY_B_HOMING: 'VERIFY_B_HOMING',
@@ -80,7 +81,7 @@ const PROCESS_VERIFY = "verify"
 
 const CALIB_ORDER = [
   STAGES.ERASE_COMPENSATION,
-  STAGES.SETUP_CNC,
+  STAGES.SETUP_CNC_CALIB,
   STAGES.SETUP_CMM,
   STAGES.PROBE_MACHINE_POS,
   STAGES.SETUP_PART_CSY,
@@ -103,7 +104,7 @@ const CALIB_ORDER = [
 
 const VERIFY_ORDER = [
   STAGES.RESTART_CNC,
-  STAGES.SETUP_CNC,
+  STAGES.SETUP_CNC_VERIFY,
   STAGES.SETUP_CMM,
   STAGES.SETUP_VERIFY,
   //'VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
@@ -133,6 +134,8 @@ function clearCompensationFiles() {
 
 function checkSaveFileExists(stage) {
   var filename = CALIB_DIR + "/Stages." + stage.toUpperCase();
+  console.log('checkSaveFileExists')
+  console.log(filename)
   if (fs.existsSync(filename)) {
     return true;
   }
@@ -144,13 +147,8 @@ function checkSaveFileExists(stage) {
 //------GLOBALS------
 class CalibProcess {
   constructor(processType) {
-    this.processType = PROCESS_RESUME//processType;
-    if(processType === PROCESS_VERIFY){
-      this.currentLevel = LEVEL_VERIFY;
-    }
-    else{
-      this.currentLevel = LEVEL_CALIB;
-    }
+    this.processType = PROCESS_NEW;
+
 
     // this.status = {
     //   begun: false,
@@ -173,17 +171,6 @@ class CalibProcess {
     this.rockhopperClient = new RockhopperClient();
     this.rockhopperClient.connect();
 
-    this.rockhopperConnected, this.intervalConnectRockhopper = false;
-    // this.rockhopperClient, this.rockhopperConnection = undefined;
-
-    this.uiConnected = false;
-    this.uiConnection = undefined;
-
-    this.skipCmm = false;
-
-    this.cmmConnected = false
-    this.lastCmmPing = undefined;
-
     this.aHomeErr = null;
     this.bHomeErr = null;
 
@@ -192,36 +179,31 @@ class CalibProcess {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
     }
-    this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
-    // this.stages.calib[STAGES.SETUP_CNC].completed = true
-    // this.stages.calib[STAGES.SETUP_CMM].completed = true
-    // this.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true
-    // this.stages.calib[STAGES.SETUP_PART_CSY].completed = true
-    // this.stages.calib[STAGES.PROBE_SPINDLE_POS].completed = true
-    // this.stages.calib[STAGES.HOMING_X].completed = true
-    // this.stages.calib[STAGES.CHARACTERIZE_X].completed = true
-    // this.stages.calib[STAGES.HOMING_Z].completed = true
-    // this.stages.calib[STAGES.CHARACTERIZE_Z].completed = true
-    // this.stages.calib[STAGES.PROBE_TOP_PLANE].completed = true
-    // this.stages.calib[STAGES.PROBE_FIXTURE_BALL_POS].completed = true
-    // this.stages.calib[STAGES.HOMING_Y].completed = true
-    // this.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
-    // this.stages.calib[STAGES.SETUP_CNC_CSY].completed = true
-    // this.stages.calib[STAGES.HOMING_A].completed = true
-    // this.stages.calib[STAGES.CHARACTERIZE_A].completed = true
 
     this.commandedState = STATE_IDLE
     this.actualState = STATE_IDLE
 
     this.results = {};
 
-    this.readyForVerify = false;
+    this.readyForVerify = true;
+  }
+
+  async runProcess() {
+    console.log('runProcess')
+    this.actualState = STATE_RUN;
+    while(this.checkAutoProgressStage){
+      console.log('runprocess iteration')
+      await this.startNextStage();
+    }
   }
 
   async cmdRun() {
+    console.log('cmdRun')
+    console.log(this.actualState)
+    console.log(this.commandedState)
     this.commandedState = STATE_RUN;
     if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
-      await this.startNextStage();
+      await this.runProcess();
     }
     else if ([STATE_PAUSE].includes(this.actualState)){
       //Continue from mid-stage pause
@@ -305,12 +287,11 @@ class CalibProcess {
   }
   async getStatus() {
     return {'stages': this.stages}
-    
   }
 
   async receiveUpdate(msg) {
     console.log('receive update')
-    console.log(msg)
+    // console.log(msg)
 
     if(msg.stage_completed){
       if(this.readyForVerify){
@@ -321,7 +302,8 @@ class CalibProcess {
       }
 
       if(this.actualState === STATE_RUN && this.commandedState === STATE_RUN){
-        await this.startNextStage();
+        // await this.startNextStage();
+        //do nothing, recent change has moved control to method runProcess
       }
       else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
         console.log('setting actual state STATE_IDLE in receive update')
@@ -335,7 +317,7 @@ class CalibProcess {
     else if(msg.why === MSG_WHY_FAIL){
       this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
       this.actualState = STATE_FAIL
-    }    
+    }
     this.results = msg;
     this.status = msg;
 
@@ -343,7 +325,6 @@ class CalibProcess {
     // status.bHomeErr = calibManagerReport.b_home_err;
     // status.aHomeErr = calibManagerReport.a_home_err;
   }
- 
   checkAutoProgressStage() {
     console.log( this.actualState === STATE_RUN && this.commandedState === STATE_RUN)
     return this.actualState === STATE_RUN && this.commandedState === STATE_RUN;
@@ -419,13 +400,9 @@ class CalibProcess {
 
   async startNextStage() {
     console.log('startNextStage')
-    console.log(this.readyForVerify)
-    console.log(this.stages.calib)
-    console.log(this.stages.verify)
     var searchIdx, nextStage;
     if(this.readyForVerify === false){
       for(searchIdx = 0; searchIdx < CALIB_ORDER.length; searchIdx++){
-        console.log(this.stages.calib[CALIB_ORDER[searchIdx]])
         if(!this.stages.calib[CALIB_ORDER[searchIdx]].completed){
           nextStage = CALIB_ORDER[searchIdx]
           break;
@@ -435,14 +412,12 @@ class CalibProcess {
     else{
       for(searchIdx = 0; searchIdx < VERIFY_ORDER.length; searchIdx++){
         if(!this.stages.verify[VERIFY_ORDER[searchIdx]].completed){
-          nextStage = CALIB_ORDER[searchIdx]
+          nextStage = VERIFY_ORDER[searchIdx]
           break;
         }
       }
     }
-    console.log(nextStage);
     var nextStageMethodName = camelCase("run_" + nextStage);
-    console.log(nextStageMethodName);
 
     var nextStageMethod = this[nextStageMethodName];
 
@@ -500,16 +475,16 @@ class CalibProcess {
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
-    if(this.checkAutoProgressStage()){
-      this.startNextStage();
-    }
-    else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-      this.actualState = STATE_IDLE
-    }
+    // if(this.checkAutoProgressStage()){
+    //   this.startNextStage();
+    // }
+    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
+    //   this.actualState = STATE_IDLE
+    // }
   }
 
   async runSetupCncCalib(){
-    console.log('runSetupCnc');
+    console.log('runSetupCncCalib');
     await this.rockhopperClient.estopCmdAsync(false);
     if(!this.rockhopperClient.state.homed){
       await this.rockhopperClient.homeAxisAsync();
@@ -517,17 +492,18 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.stages.calib[STAGES.SETUP_CNC].completed = true;
-    if(this.checkAutoProgressStage()){
-      this.startNextStage();
-    }
-    else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-      this.actualState = STATE_IDLE
-    }
+    this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true;
+    // if(this.checkAutoProgressStage()){
+    //   this.startNextStage();
+    // }
+    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
+    //   this.actualState = STATE_IDLE
+    // }
   }
   async runSetupCmm(){
     console.log('runSetupCmm');
     await this.rockhopperClient.runToCompletion('v2_calib_setup_cmm.ngc');
+    return
   }
   async runProbeMachinePos(){
     console.log('runProbeMachinePos');
@@ -548,6 +524,7 @@ class CalibProcess {
   async runHomingX(){
     console.log('runHomingX');
     for(let idx = 0; idx < 5; idx++){
+      console.log('runHomingX ' + idx);
       await this.rockhopperClient.mdiCmdAsync("G0 X60");
       await this.rockhopperClient.unhomeAxisAsync([0]);
       await this.rockhopperClient.homeAxisAsync([0]);
@@ -591,15 +568,10 @@ class CalibProcess {
       }
       if(idx < 4){
         await this.rockhopperClient.mdiCmdAsync("G0 Z-3.5");
-        await this.rockhopperClient.waitForDoneAndIdle(100);
         await this.rockhopperClient.unhomeAxisAsync([2]);
-        await this.rockhopperClient.waitForDoneAndIdle(100);
         await this.rockhopperClient.homeAxisAsync([2]);
-        await this.rockhopperClient.waitForDoneAndIdle(100);
       }
     }
-    await this.rockhopperClient.waitForDoneAndIdle(1000);
-  
     await this.rockhopperClient.runToCompletion('v2_calib_verify_z_home.ngc');
   }
   async runCharacterizeZ(){
@@ -638,7 +610,7 @@ class CalibProcess {
   }
   async runHomingB(){
     console.log('runHomingB');
-  
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
     for(let idx = 0; idx < 5; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
       if( !this.checkContinueCurrentStage() ){
@@ -663,6 +635,7 @@ class CalibProcess {
   async runWriteCalib(){
     console.log('runWriteCalib');
     await this.rockhopperClient.runToCompletion('v2_calib_write_calib.ngc');
+    this.readyForVerify = true;
   }
   async runRestartCnc(){
     console.log('runRestartCnc');
@@ -685,12 +658,29 @@ class CalibProcess {
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.verify[STAGES.RESTART_CNC].completed = true;
-    if(this.checkAutoProgressStage()){
-      this.startNextStage();
+    // if(this.checkAutoProgressStage()){
+    //   this.startNextStage();
+    // }
+    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
+    //   this.actualState = STATE_IDLE
+    // }
+  }
+  async runSetupCncVerify(){
+    console.log('runSetupCncVerify');
+    await this.rockhopperClient.estopCmdAsync(false);
+    if(!this.rockhopperClient.state.homed){
+      await this.rockhopperClient.homeAxisAsync();
     }
-    else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-      this.actualState = STATE_IDLE
-    }
+
+    //This stage does not run any steps in cmm-calib.
+    //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
+    this.stages.verify[STAGES.SETUP_CNC_VERIFY].completed = true;
+    // if(this.checkAutoProgressStage()){
+    //   this.startNextStage();
+    // }
+    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
+    //   this.actualState = STATE_IDLE
+    // }
   }
   async runSetupVerify(){
     console.log('runSetupVerify');
@@ -720,6 +710,7 @@ class CalibProcess {
   // }
   async runVerifyA(){
     console.log('runVerifyA');
+      await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
     var homingAttemptsCount = 0;
     while(true){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
@@ -727,7 +718,7 @@ class CalibProcess {
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(Math.abs(this.results.aHomeErr) < 0.01){
+      if(Math.abs(this.results.a_home_err) < 0.01){
         console.log("VERIFY_A home position within range, error " + this.results.aHomeErr);
         break;
       }
@@ -775,7 +766,7 @@ class CalibProcess {
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(Math.abs(this.results.bHomeErr) < 0.01){
+      if(Math.abs(this.results.b_home_err) < 0.01){
         console.log("VERIFY_B home position within range, error " + this.results.bHomeErr);
         break;
       }
