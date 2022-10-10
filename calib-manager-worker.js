@@ -24,7 +24,7 @@ class CalibManagerWorker {
     });
 
     this.calibSocket.on("message", async (msg) => {
-      console.log("Received ZMQ msg from Calib manager: %s", msg.toString());
+      // console.log("Received ZMQ msg from Calib manager: %s", msg.toString());
       var calibManagerReport = JSON.parse(msg);
       await this.calibProcess.receiveUpdate(calibManagerReport);
     });
