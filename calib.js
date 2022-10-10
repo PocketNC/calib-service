@@ -127,6 +127,7 @@ function readCompensationFiles() {
   var bData = fs.readFileSync(B_COMP_PATH, 'ascii');
   return {a: aData, b: bData};
 }
+//TODO change to async, remember to add await to call
 function clearCompensationFiles() {
   fs.writeFileSync(A_COMP_PATH, "");
   fs.writeFileSync(B_COMP_PATH, "");
@@ -188,7 +189,7 @@ class CalibProcess {
 
     this.status = {};
 
-    this.readyForVerify = true;
+    this.readyForVerify = false;
   }
 
 
@@ -296,9 +297,8 @@ class CalibProcess {
 
   async receiveUpdate(msg) {
     console.log('----Update message----')
-    console.log(msg)
 
-    if(msg.stage_completed){
+    if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
       if(this.readyForVerify){
         this.stages.verify[msg.stage].completed = true;
@@ -452,7 +452,7 @@ class CalibProcess {
     console.log('runEraseCompensation');
     var comps = await readCompensationFiles();
     if(comps.a.length > 2 || comps.b.length > 2 ){
-      await clearCompensationFiles();
+      clearCompensationFiles();
       console.log('Compensation files cleared, restarting services.');
       await this.rockhopperClient.restartServices();
       
