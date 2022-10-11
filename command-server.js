@@ -33,6 +33,9 @@ class CommandServer {
 
       cmdRun: this.cmdRun,
       cmdStep: this.cmdStep,
+      cmdStop: this.cmdStop,
+      cmdPause: this.cmdPause,
+      cmdResume: this.cmdResume,
 
       cmdSetProcess,
       // cmdSetSkipCmm,
@@ -115,6 +118,15 @@ class CommandServer {
   }
   cmdRun() {
     this.calibProcess.cmdRun(...arguments);
+  }
+  cmdStop() {
+    this.calibProcess.cmdStop(...arguments);
+  }
+  cmdPause() {
+    this.calibProcess.cmdPause(...arguments);
+  }
+  cmdResume() {
+    this.calibProcess.cmdResume(...arguments);
   }
   getCalibStatus() {
     console.log('getCalibStatus')

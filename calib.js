@@ -4,10 +4,55 @@ const execPromise = util.promisify(exec);
 const fs = require('fs');
 const camelCase = require('to-camel-case');
 const { RockhopperClient } = require('./rockhopper');
+const { CommandServer } = require('./command-server');
 
 
 const POCKETNC_VAR_DIRECTORY = process.env.POCKETNC_VAR_DIRECTORY;
+const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
+const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
+const OVERLAY_PATH = POCKETNC_VAR_DIRECTORY + '/CalibrationOverlay.inc';
 const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
+
+
+async function copyExistingOverlay() {
+  try{
+    await fs.copyFile(OVERLAY_PATH, CALIB_DIR + "/CalibrationOverlay.inc.initial")
+  } catch {
+    console.log('Error copying existing overlay')
+  }
+}
+async function copyNewCompFilesToVarDir() {
+  try {
+    await fs.copyFile(CALIB_DIR + "/CalibrationOverlay.inc", OVERLAY_PATH, (err))
+    await fs.copyFile(CALIB_DIR + "/a.comp.raw", A_COMP_PATH)
+    await fs.copyFile(CALIB_DIR + "/b.comp.raw", B_COMP_PATH)
+  } catch {
+    console.log('Error copying new comp files to VAR dir')
+  }
+}
+
+function readCompensationFiles() {
+  var aData = fs.readFileSync(A_COMP_PATH, 'ascii');
+  var bData = fs.readFileSync(B_COMP_PATH, 'ascii');
+  return {a: aData, b: bData};
+}
+//TODO change to async, remember to add await to call
+function clearCompensationFiles() {
+  fs.writeFileSync(A_COMP_PATH, "");
+  fs.writeFileSync(B_COMP_PATH, "");
+}
+
+function checkSaveFileExists(stage) {
+  var filename = CALIB_DIR + "/Stages." + stage.toUpperCase();
+  console.log('checkSaveFileExists')
+  console.log(filename)
+  if (fs.existsSync(filename)) {
+    return true;
+  }
+  else {
+    return false;
+  }
+}
 
 const STAGES = {
   ERASE_COMPENSATION: 'ERASE_COMPENSATION',
@@ -117,33 +162,8 @@ const VERIFY_ORDER = [
 ]
 
 
-const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
-const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
-
 const Y_POS_PROBING = -63;
 
-function readCompensationFiles() {
-  var aData = fs.readFileSync(A_COMP_PATH, 'ascii');
-  var bData = fs.readFileSync(B_COMP_PATH, 'ascii');
-  return {a: aData, b: bData};
-}
-//TODO change to async, remember to add await to call
-function clearCompensationFiles() {
-  fs.writeFileSync(A_COMP_PATH, "");
-  fs.writeFileSync(B_COMP_PATH, "");
-}
-
-function checkSaveFileExists(stage) {
-  var filename = CALIB_DIR + "/Stages." + stage.toUpperCase();
-  console.log('checkSaveFileExists')
-  console.log(filename)
-  if (fs.existsSync(filename)) {
-    return true;
-  }
-  else {
-    return false;
-  }
-}
 
 //------GLOBALS------
 class CalibProcess {
@@ -153,23 +173,15 @@ class CalibProcess {
     this.processType = PROCESS_NEW;
 
 
-    // this.status = {
-    //   begun: false,
-    //   processType: null,
-    //   cmmConnected: false,
-    //   cmmError: false,
-    //   cncError: false,
-    //   stages: {
-    //     calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false}}), {}),
-    //     verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false}}), {}),
-    //   },
-    //   processState: STATE_IDLE,
-    //   execState: STATE_IDLE,
-    //   status: STATE_IDLE,
-    //   currentMode: MODE_VERIFY,
-    //   currentStep: null,
-    //   currentStage: null,
-    // }
+    this.status = {
+      begun: false,
+      processType: null,
+      cmmConnected: false,
+      cmmError: false,
+      cncError: false,
+      currentStep: null,
+      currentStage: STAGES.PROBE_MACHINE_POS,
+    }
 
     this.rockhopperClient = new RockhopperClient();
     this.rockhopperClient.connect();
@@ -182,29 +194,30 @@ class CalibProcess {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
     }
-    this.managerStages = undefined;
+    this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
+    this.managerStages = {};
+    this.managerStatus = {};
 
     this.commandedState = STATE_IDLE
     this.actualState = STATE_IDLE
 
-    this.status = {};
-
     this.readyForVerify = false;
+    this.commandServer = new CommandServer(this);
+
   }
 
 
 
   async cmdRun() {
     console.log('cmdRun')
-    console.log(this.actualState)
-    console.log(this.commandedState)
     this.commandedState = STATE_RUN;
     if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
       await this.runProcess();
     }
     else if ([STATE_PAUSE].includes(this.actualState)){
       //Continue from mid-stage pause
-      //TODO return message
+      //Eventually, PAUSE state could be mid-stage. Currently, PAUSE means "run until current stage finishes", so for now, continuing from pause is the same as continuing from idle
+      await this.runProcess();
     }
     else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
       //Can't run after error, return message
@@ -218,6 +231,30 @@ class CalibProcess {
       //Currently running a single stage, just change actualState so that
       //process auto-continues upon completion of current stage
       this.actualState = STATE_RUN;
+    }
+  }
+  async cmdResume() {
+    this.commandedState = STATE_PAUSE;
+    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+      await this.runProcess();
+    }
+    else if ([STATE_PAUSE].includes(this.actualState)){
+      //Continue from mid-stage pause
+      //Eventually, PAUSE state could be mid-stage. Currently, PAUSE means "run until current stage finishes", so for now, continuing from pause is the same as continuing from idle
+      await this.runProcess();
+    }
+    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+      //Already stopped, nothing happening to pause
+      //TODO return message
+    }
+    else if([STATE_STOP].includes(this.actualState)){
+      //Already stopped, nothing happening to pause
+      //TODO return message
+    }
+    else if([STATE_STEP, STATE_RUN].includes(this.actualState)){
+      //Currently running
+      //TODO implement more immediate PAUSE
+      //For now, we just change commanded state and wait for current stage to complete
     }
   }
   async cmdStep() {
@@ -290,14 +327,31 @@ class CalibProcess {
     console.log('runProcess')
     this.actualState = STATE_RUN;
     while(this.checkAutoProgressStage){
-      console.log('runprocess iteration')
+      console.log('Running process, OK to continue. Starting next stage.')
       await this.startNextStage();
+      await this.sendUpdate();
+    }
+    //leaving while loop, update actualState
+    if(this.commandedState === STATE_STOP){
+      process.exit(0) // exitcode 0 means 'success'
+    }
+    else{
+      this.actualState = this.commandedState
     }
   }
 
+  async sendUpdate() {
+    var update = {};
+    update.commandedState = this.commandedState;
+    update.actualState = this.actualState;
+    update.stages = this.stages;
+    update.status = this.status;
+    update.managerStatus = this.managerStatus;
+    update.spec = this.spec;
+    this.commandServer.send({'calibStatus': update});
+  }
   async receiveUpdate(msg) {
     console.log('----Update message----')
-
     if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
       if(this.readyForVerify){
@@ -308,7 +362,7 @@ class CalibProcess {
       }
 
       if(this.commandedState !== STATE_RUN){
-        console.log('setting actual state STATE_IDLE in receive update because commanded state is not STATE_RUN, it is ' + self.commandedState)
+        console.log('setting actual state STATE_IDLE in receive update because commanded state is not STATE_RUN, it is ' + this.commandedState)
         this.actualState = STATE_IDLE
       }
     }
@@ -321,8 +375,10 @@ class CalibProcess {
       this.actualState = STATE_FAIL
     }
     this.managerStageProgress = msg.stage_progress;
-    this.status = msg.status;
+    this.managerStatus = msg.status;
     this.spec = msg.spec;
+
+    await this.sendUpdate()
 
     // status.skipCmm = calibManagerReport.skip_cmm;
     // status.bHomeErr = calibManagerReport.b_home_err;
@@ -332,9 +388,6 @@ class CalibProcess {
     return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && this.status.cmm_error === false;
   }
   checkContinueCurrentStage() {
-    console.log(this.actualState)
-    console.log(this.commandedState)
-    console.log([STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState));
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
   }
   runIntervalConnectRockhopper() {
@@ -431,7 +484,7 @@ class CalibProcess {
     
     console.log("Running stage method: " + nextStageMethodName)
     // await this.rockhopperClient.waitForDoneAndIdle();
-    this.currentStage = nextStage;
+    this.status.currentStage = nextStage;
     try{
       if(this.processType === PROCESS_RESUME && LOADABLE_STAGES.has(nextStage) && checkSaveFileExists(nextStage)){
         console.log('Loading progress for stage ' + nextStage);
@@ -474,9 +527,13 @@ class CalibProcess {
       console.log('Compensation already cleared');
     }
 
+    //Make a backup of the current CalibrationOverlay, which will be active until restart for verify
+    await copyExistingOverlay()
+
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
+    this.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
@@ -641,6 +698,7 @@ class CalibProcess {
   }
   async runRestartCnc(){
     console.log('runRestartCnc');
+
     await this.rockhopperClient.restartServices()
     
     //This delay is intended to ensure that the current rockhopper process has halted before we begin polling for connection

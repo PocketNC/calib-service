@@ -15,24 +15,23 @@ console.log = function() {
 console.error = console.log;
 
 const { CalibProcess } = require('./calib');
-const { CommandServer } = require('./command-server');
 const { CalibManagerWorker } = require('./calib-manager-worker');
 
-var serial_num = null;
+var serialNum = null;
 process.argv.forEach(function (val, index, array) {
   console.log(index + ': ' + val);
-  if(index === 2){
-    serial_num = val;
+  if(index === 3){
+    serialNum = val;
   }
 });
 
 
-var lastCmmPing = 0;
-var lastCmmPingSuccesful = false;
-var prevCmmPingSuccesful = false;
-var interpIdle = false;
-var homed = false;
+var calibProcess = new CalibProcess(serialNum);
+var calibManagerWorker = new CalibManagerWorker(calibProcess);
+calibManagerWorker.connect();
 
+
+var lastCmmPing = 0;
 
 async function pingCmmLoop() {
   while(true){
@@ -42,51 +41,25 @@ async function pingCmmLoop() {
       const cmmPing = await execPromise("ping -c 1 10.0.0.1");
       // console.log(cmmPing)
       lastCmmPing = Date.now();
-      cmmPingSuccesful = true;
-      calibProcess.cmmConnected = true;
-      // console.log('cmm connected')
-    } catch(e) {
-      // console.log(e)
-
-      calibProcess.cmmConnected = false;
-      cmmPingSuccesful = false;
-    }
-    if(calibProcess ){//&& cmmPingSuccesful !== prevCmmPingSuccesful){
-      try {
-        // const data = await getCalibStatus();
-        // console.log(data)
-        // console.log(commandServer)
-        // uiConnection.send(JSON.stringify({ ['getCalibStatus']: data }));
-      } catch(e) {
-        console.log('error')
-        console.log(e)
-      }
+      calibProcess.status.cmmConnected = true;
+    } 
+    catch(e) {
+      calibProcess.status.cmmConnected = false;
     }
   }
 }
 
-async function pingCmm() {
-    await new Promise(r => setTimeout(r, 1000));
-    const cmmPing = await execPromise("ping -c 1 10.0.0.1");
-    console.log(cmmPing)
-    lastCmmPing = cmmPing;
-}
-
-var calibProcess = new CalibProcess(serial_num);
-var commandServer = new CommandServer(calibProcess);
-var calibManagerWorker = new CalibManagerWorker(calibProcess);
-calibManagerWorker.connect();
-
 async function startup() {
   while(true){
     await new Promise(r => setTimeout(r, 1000));
-    if(commandServer.isConnected() && calibProcess.rockhopperClient.connected){
+    console.log(calibProcess.commandServer.isConnected())
+    console.log(calibProcess.rockhopperClient.connected)
+    if(calibProcess.commandServer.isConnected() && calibProcess.rockhopperClient.connected){
       break;
     }
   }
   await calibProcess.cmdRun()
 }
-
 
 function main() {
   pingCmmLoop();
@@ -95,5 +68,4 @@ function main() {
 
 main()
 
-console.log("starting, serial num " + serial_num);
-
+console.log("Starting CMM calibration process, machine serial " + serialNum);
