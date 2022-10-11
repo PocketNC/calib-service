@@ -3,17 +3,6 @@ const { exec } = require("child_process");
 const execPromise = util.promisify(exec);
 const fs = require('fs');
 
-// Log to file and to stdout
-//
-const logFile = fs.createWriteStream('/var/opt/pocketnc/calib/calib-service.log', { flags: 'a' });
-const logStdout = process.stdout;
-
-console.log = function() {
-  logFile.write(util.format.apply(null, arguments) + "\n");
-  logStdout.write(util.format.apply(null, arguments) + "\n");
-}
-console.error = console.log;
-
 const { CalibProcess } = require('./calib');
 const { CalibManagerWorker } = require('./calib-manager-worker');
 
@@ -61,11 +50,9 @@ async function startup() {
   await calibProcess.cmdRun()
 }
 
-function main() {
-  pingCmmLoop();
-  startup();
+async function main() {
+  console.log("Starting CMM calibration process, machine serial " + serialNum);
+  await Promise.all([ pingCmmLoop(), startup() ]);
 }
 
 main()
-
-console.log("Starting CMM calibration process, machine serial " + serialNum);

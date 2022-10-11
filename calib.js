@@ -326,7 +326,7 @@ class CalibProcess {
   async runProcess() {
     console.log('runProcess')
     this.actualState = STATE_RUN;
-    while(this.checkAutoProgressStage){
+    while(this.checkAutoProgressStage()){
       console.log('Running process, OK to continue. Starting next stage.')
       await this.startNextStage();
       await this.sendUpdate();
@@ -385,7 +385,8 @@ class CalibProcess {
     // status.aHomeErr = calibManagerReport.a_home_err;
   }
   checkAutoProgressStage() {
-    return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && this.status.cmm_error === false;
+    console.log("checkAutoProgressStage", this.actualState, this.commandedState, this.status.cmm_error);
+    return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.status.cmm_error;
   }
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
