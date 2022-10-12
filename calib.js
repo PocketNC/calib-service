@@ -194,7 +194,6 @@ class CalibProcess {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
     }
-    this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
     this.managerStages = {};
     this.managerStatus = {};
 
@@ -352,6 +351,7 @@ class CalibProcess {
   }
   async receiveUpdate(msg) {
     console.log('----Update message----')
+    console.log(msg)
     if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
       if(this.readyForVerify){
@@ -367,12 +367,16 @@ class CalibProcess {
       }
     }
     else if(msg.why === MSG_WHY_ERROR){
-      this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
-      this.actualState = STATE_ERROR
+      this.actualState = STATE_ERROR;
+      if(msg.stage){
+        this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
+      }
     }
     else if(msg.why === MSG_WHY_FAIL){
-      this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
-      this.actualState = STATE_FAIL
+      this.actualState = STATE_FAIL;
+      if(msg.stage){
+        this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
+      }
     }
     this.managerStageProgress = msg.stage_progress;
     this.managerStatus = msg.status;
@@ -385,8 +389,8 @@ class CalibProcess {
     // status.aHomeErr = calibManagerReport.a_home_err;
   }
   checkAutoProgressStage() {
-    console.log("checkAutoProgressStage", this.actualState, this.commandedState, this.status.cmm_error);
-    return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.status.cmm_error;
+    console.log("checkAutoProgressStage", this.actualState, this.commandedState, this.managerStatus.cmm_error);
+    return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
@@ -534,7 +538,6 @@ class CalibProcess {
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
-    this.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
@@ -779,8 +782,8 @@ class CalibProcess {
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(Math.abs(this.status.a_home_err) < 0.01){
-        console.log("VERIFY_A home position within range, error " + this.status.a_home_err);
+      if(Math.abs(this.managerStatus.a_home_err) < 0.01){
+        console.log("VERIFY_A home position within range, error " + this.managerStatus.a_home_err);
         break;
       }
 
@@ -827,8 +830,8 @@ class CalibProcess {
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(Math.abs(this.status.b_home_err) < 0.01){
-        console.log("VERIFY_B home position within range, error " + this.status.b_home_err);
+      if(Math.abs(this.managerStatus.b_home_err) < 0.01){
+        console.log("VERIFY_B home position within range, error " + this.managerStatus.b_home_err);
         break;
       }
 
