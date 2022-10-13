@@ -174,6 +174,8 @@ class CalibProcess {
 
 
     this.status = {
+      lastStageStartTime: undefined,
+      lastStageCompleteTime: undefined,
       begun: false,
       processType: null,
       cmmConnected: false,
@@ -181,6 +183,9 @@ class CalibProcess {
       cncError: false,
       currentStep: null,
       currentStage: STAGES.PROBE_MACHINE_POS,
+      specFailure: false,
+      error: false,
+      errorMsg: null,
     }
 
     this.rockhopperClient = new RockhopperClient();
@@ -233,7 +238,7 @@ class CalibProcess {
     }
   }
   async cmdResume() {
-    this.commandedState = STATE_PAUSE;
+    this.commandedState = STATE_RUN;
     if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
       await this.runProcess();
     }
@@ -302,20 +307,23 @@ class CalibProcess {
   async cmdStop() {
     //Terminate the calibration
     this.commandedState = STATE_STOP;
+    console.log('CmdStop, actualState is ' + this.actualState);
     if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
-      //Already idle, this is just a semantic state change
-      this.actualState = STATE_STOP;
+      //Already idle. Exit process
+      process.exit(0);
     }
     else if([STATE_PAUSE].includes(this.actualState)){
-      //TODO
+      //TODO? Currently no situations where actualState is PAUSE
     }
     else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
-      //TODO
+      //Already idle. Exit process
+      process.exit(0);
     }
     else if([STATE_STEP, STATE_RUN].includes(this.actualState)){
       //Currently running
       //TODO implement more immediate STOP
-      //For now, we just change commanded state and wait for current stage to complete
+      //For now, we just change commanded state and wait for current stage to complete.
+      //In runProcess the commanded state is checked after each stage complete
     }
   }
   async getStatus() {
@@ -327,6 +335,7 @@ class CalibProcess {
     this.actualState = STATE_RUN;
     while(this.checkAutoProgressStage()){
       console.log('Running process, OK to continue. Starting next stage.')
+      this.status.lastStageStartTime = Date.now();
       await this.startNextStage();
       await this.sendUpdate();
     }
@@ -352,8 +361,12 @@ class CalibProcess {
   async receiveUpdate(msg) {
     console.log('----Update message----')
     console.log(msg)
+    this.status.error = msg.status.error;
+    this.status.errorMsg = msg.status.error_msg;
+    this.status.specFailure = msg.status.spec_failure;
     if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
+      this.status.lastStageCompleteTime = Date.now();
       if(this.readyForVerify){
         this.stages.verify[msg.stage].completed = true;
       }
@@ -389,8 +402,8 @@ class CalibProcess {
     // status.aHomeErr = calibManagerReport.a_home_err;
   }
   checkAutoProgressStage() {
-    console.log("checkAutoProgressStage", this.actualState, this.commandedState, this.managerStatus.cmm_error);
-    return this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
+    console.log("checkAutoProgressStage", (this.status.lastStageCompleteTime > this.status.lastStageStartTime), this.actualState, this.commandedState, this.managerStatus.cmm_error);
+    return (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
@@ -459,7 +472,6 @@ class CalibProcess {
   }
 
   async startNextStage() {
-    console.log('startNextStage')
     var searchIdx, nextStage;
     if(this.readyForVerify === false){
       for(searchIdx = 0; searchIdx < CALIB_ORDER.length; searchIdx++){
@@ -537,6 +549,7 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
+    this.status.lastStageCompleteTime = Date.now();
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
@@ -555,7 +568,8 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true;
+    this.status.lastStageCompleteTime = Date.now();
+      this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
@@ -722,6 +736,7 @@ class CalibProcess {
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.verify[STAGES.RESTART_CNC].completed = true;
+    this.status.lastStageCompleteTime = Date.now();
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
@@ -738,6 +753,7 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
+    this.status.lastStageCompleteTime = Date.now();
     this.stages.verify[STAGES.SETUP_CNC_VERIFY].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
