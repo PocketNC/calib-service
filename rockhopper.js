@@ -11,12 +11,14 @@ class RockhopperClient {
     this.client = new WebSocketClient();
     this.socket = undefined;
 
-    this.client.on('connectFailed', (error) => {
+    this.alwaysReconnect = (error) => {
       this.connected = false;
       this.socket = undefined;
       setTimeout(this.connect, 3000);
       console.log('Rockhopper Connect Error: ' + error.toString());
-    });
+    };
+
+    this.client.on('connectFailed', this.alwaysReconnect);
 
     this.client.on('connect', (socket) => {
       this.connected = true;
@@ -24,44 +26,31 @@ class RockhopperClient {
       console.log('Rockhopper Connection established!');
 
       socket.send(JSON.stringify({id: "LOGIN_ID", user: "default", password: 'default', date: new Date(),}));
-      socket.send(JSON.stringify({id: "WATCH_INTERP_STATE", name: "interp_state", command:"watch"}));
-      socket.send(JSON.stringify({id: "WATCH_STATE", name: "state", command:"watch"}));
-      socket.send(JSON.stringify({id: "WATCH_HOMED", name: "homed", command:"watch"}));
 
       socket.on('error', (error) => {
         this.connected = false;
         console.log("Rockhopper Connection error: " + error.toString());
       });
-      socket.on('close', () => {
+      this.socketAlwaysReconnect = () => {
         this.connected = false;
         this.socket = undefined;
         this.connect();
         console.log('Rockhopper Connection closed!');
-      });
+      };
+      socket.on('close', this.socketAlwaysReconnect);
       socket.on('message', (data) => {
         const msg = JSON.parse(data.utf8Data);
         if(this.callbacks[msg.id]){
           this.callbacks[msg.id](msg);
         }
-        switch(msg.id){
-          case('WATCH_INTERP_STATE'):
-            this.state.interpState = msg.data
-          case('WATCH_STATE'):
-            this.state.state = msg.data
-          case('WATCH_HOMED'):
-            var axesHomed = 0;
-            for(let idx = 0; idx < 6; idx++){
-              axesHomed += msg.data[idx];
-            }
-            if(axesHomed === 5){
-              this.state.homed = true;
-            }
-            else { this.state.homed = false; }
-          default:
-            break;
-        }
       });
     });
+  }
+
+  disconnect = () => {
+    this.client.off('connectFailed', this.alwaysReconnect);
+    this.socket.off('close', this.socketAlwaysReconnect);
+    this.socket.close();
   }
 
   genCommandPromise = (msgData) => {
@@ -85,6 +74,14 @@ class RockhopperClient {
 
   connect = () => {
     this.client.connect('ws://localhost:8000/websocket/');
+
+    return new Promise((resolve) => {
+      const unregisterAndResolve = () => {
+        this.client.off("connect", unregisterAndResolve);
+        resolve();
+      }
+      this.client.on("connect", unregisterAndResolve);
+    })
   }
 
   registerCallback(id, callback) {
