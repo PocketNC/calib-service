@@ -335,16 +335,13 @@ class CalibProcess {
     this.actualState = STATE_RUN;
     while(this.checkAutoProgressStage()){
       console.log('Running process, OK to continue. Starting next stage.')
-      this.status.lastStageStartTime = Date.now();
+      this.status.lastStageStartTime = process.uptime();
       await this.startNextStage();
       await this.sendUpdate();
     }
     //leaving while loop, update actualState
     if(this.commandedState === STATE_STOP){
       process.exit(0) // exitcode 0 means 'success'
-    }
-    else{
-      this.actualState = this.commandedState
     }
   }
 
@@ -366,7 +363,7 @@ class CalibProcess {
     this.status.specFailure = msg.status.spec_failure;
     if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
-      this.status.lastStageCompleteTime = Date.now();
+      this.status.lastStageCompleteTime = process.uptime();
       if(this.readyForVerify){
         this.stages.verify[msg.stage].completed = true;
       }
@@ -549,7 +546,7 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.status.lastStageCompleteTime = Date.now();
+    this.status.lastStageCompleteTime = process.uptime();
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
@@ -568,7 +565,7 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.status.lastStageCompleteTime = Date.now();
+    this.status.lastStageCompleteTime = process.uptime();
       this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
@@ -736,7 +733,7 @@ class CalibProcess {
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
     this.stages.verify[STAGES.RESTART_CNC].completed = true;
-    this.status.lastStageCompleteTime = Date.now();
+    this.status.lastStageCompleteTime = process.uptime();
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
@@ -753,7 +750,7 @@ class CalibProcess {
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.status.lastStageCompleteTime = Date.now();
+    this.status.lastStageCompleteTime = process.uptime();
     this.stages.verify[STAGES.SETUP_CNC_VERIFY].completed = true;
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
