@@ -16,9 +16,10 @@ const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 
 async function copyExistingOverlay() {
   try{
-    await fs.copyFile(OVERLAY_PATH, CALIB_DIR + "/CalibrationOverlay.inc.initial")
-  } catch {
+    await fs.copyFile(OVERLAY_PATH, CALIB_DIR + "/CalibrationOverlay.inc.initial", (err) => {console.log(err)})
+  } catch(error) {
     console.log('Error copying existing overlay')
+    console.log(error);
   }
 }
 async function copyNewCompFilesToVarDir() {
@@ -109,6 +110,7 @@ const STATE_STEP = "STEP" //Idle after each stage completes
 const STATE_STOP = "STOP" //Terminate the process
 const STATE_ERROR = "ERROR" //Something has gone wrong, process should stop
 const STATE_FAIL = "FAIL" //The machine has failed a spec check, process should stop
+const STATE_COMPLETE = "COMPLETE" //Calibration process has completed succesfully. This process is still active to communicate with UI
 
 const LEVEL_CALIB = "calib"
 const LEVEL_VERIFY = "verify"
@@ -186,6 +188,8 @@ class CalibProcess {
       specFailure: false,
       error: false,
       errorMsg: null,
+      calibCompleted: false,
+      verifyCompleted: false,
     }
 
     this.rockhopperClient = new RockhopperClient();
@@ -236,6 +240,7 @@ class CalibProcess {
       //process auto-continues upon completion of current stage
       this.actualState = STATE_RUN;
     }
+    await this.sendUpdate();
   }
   async cmdResume() {
     this.commandedState = STATE_RUN;
@@ -260,6 +265,7 @@ class CalibProcess {
       //TODO implement more immediate PAUSE
       //For now, we just change commanded state and wait for current stage to complete
     }
+    await this.sendUpdate();
   }
   async cmdStep() {
     this.commandedState = STATE_STEP;
@@ -283,6 +289,7 @@ class CalibProcess {
       //process idles upon completion of current stage
       this.actualState = STATE_STEP;
     }
+    await this.sendUpdate();
   }
   async cmdPause() {
     this.commandedState = STATE_PAUSE;
@@ -303,17 +310,19 @@ class CalibProcess {
       //TODO implement more immediate PAUSE
       //For now, we just change commanded state and wait for current stage to complete
     }
+    await this.sendUpdate();
   }
   async cmdStop() {
     //Terminate the calibration
-    this.commandedState = STATE_STOP;
     console.log('CmdStop, actualState is ' + this.actualState);
+    this.commandedState = STATE_STOP;
+    await this.sendUpdate();
     if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
       //Already idle. Exit process
       process.exit(0);
     }
     else if([STATE_PAUSE].includes(this.actualState)){
-      //TODO? Currently no situations where actualState is PAUSE
+      process.exit(0);
     }
     else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
       //Already idle. Exit process
@@ -335,13 +344,28 @@ class CalibProcess {
     this.actualState = STATE_RUN;
     while(this.checkAutoProgressStage()){
       console.log('Running process, OK to continue. Starting next stage.')
-      this.status.lastStageStartTime = process.uptime();
       await this.startNextStage();
       await this.sendUpdate();
     }
-    //leaving while loop, update actualState
-    if(this.commandedState === STATE_STOP){
-      process.exit(0) // exitcode 0 means 'success'
+
+    if(this.status.completed){
+      this.actualState = STATE_COMPLETE
+      await this.sendUpdate();
+    }
+    else if(this.commandedState === STATE_PAUSE){
+      //earlier we received a cmdPause, but must have been mid-stage. Now we have returned from running that stage and can pause
+      this.actualState = STATE_PAUSE;
+    }
+    else if(this.commandedState === STATE_STOP){
+      //earlier we received a cmdStop, but must have been mid-stage. Now we have returned from running that stage and can exit
+      process.exit(0);
+    }
+    else if(this.commandedState === STATE_RUN && this.actualState === STATE_RUN){
+      //Exiting loop but have not finished, not stopping, and still in STATE_RUN. Something is wrong
+      this.actualState = STATE_ERROR
+      this.status.error = true;
+      this.status.errorMsg = "Unable to start next stage";
+      await this.sendUpdate();
     }
   }
 
@@ -361,6 +385,9 @@ class CalibProcess {
     this.status.error = msg.status.error;
     this.status.errorMsg = msg.status.error_msg;
     this.status.specFailure = msg.status.spec_failure;
+    this.managerStageProgress = msg.stage_progress;
+    this.managerStatus = msg.status;
+    this.spec = msg.spec;
     if(msg.did_stage_complete){
       //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
       this.status.lastStageCompleteTime = process.uptime();
@@ -371,35 +398,23 @@ class CalibProcess {
         this.stages.calib[msg.stage].completed = true;
       }
 
-      if(this.commandedState !== STATE_RUN){
-        console.log('setting actual state STATE_IDLE in receive update because commanded state is not STATE_RUN, it is ' + this.commandedState)
-        this.actualState = STATE_IDLE
-      }
+      // if(this.commandedState !== STATE_RUN){
+      //   console.log('setting actual state STATE_IDLE in receive update because commanded state is not STATE_RUN, it is ' + this.commandedState)
+      //   this.actualState = STATE_IDLE
+      // }
     }
-    else if(msg.why === MSG_WHY_ERROR){
+    if(msg.why === MSG_WHY_ERROR){
       this.actualState = STATE_ERROR;
-      if(msg.stage){
-        this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
-      }
+      this.stages[this.readyForVerify ? "verify" : "calib"][this.status.currentStage].error = true;
     }
-    else if(msg.why === MSG_WHY_FAIL){
+    if(msg.why === MSG_WHY_FAIL){
       this.actualState = STATE_FAIL;
-      if(msg.stage){
-        this.stages[this.readyForVerify ? "verify" : "calib"][msg.stage].error = true;
-      }
+      this.stages[this.readyForVerify ? "verify" : "calib"][this.status.currentStage].failed = true;
     }
-    this.managerStageProgress = msg.stage_progress;
-    this.managerStatus = msg.status;
-    this.spec = msg.spec;
-
     await this.sendUpdate()
-
-    // status.skipCmm = calibManagerReport.skip_cmm;
-    // status.bHomeErr = calibManagerReport.b_home_err;
-    // status.aHomeErr = calibManagerReport.a_home_err;
   }
   checkAutoProgressStage() {
-    console.log("checkAutoProgressStage", (this.status.lastStageCompleteTime > this.status.lastStageStartTime), this.actualState, this.commandedState, this.managerStatus.cmm_error);
+    console.log("checkAutoProgressStage", this.status.lastStageCompleteTime, this.status.lastStageStartTime, this.actualState, this.commandedState, this.managerStatus.cmm_error);
     return (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
@@ -468,45 +483,66 @@ class CalibProcess {
     )
   }
 
-  async startNextStage() {
+  checkStageProgress() {
     var searchIdx, nextStage;
-    if(this.readyForVerify === false){
-      for(searchIdx = 0; searchIdx < CALIB_ORDER.length; searchIdx++){
-        if(!this.stages.calib[CALIB_ORDER[searchIdx]].completed){
-          nextStage = CALIB_ORDER[searchIdx]
-          break;
-        }
+    for(searchIdx = 0; searchIdx < CALIB_ORDER.length; searchIdx++){
+      if(!this.stages.calib[CALIB_ORDER[searchIdx]].completed){
+        nextStage = CALIB_ORDER[searchIdx]
+        break;
       }
     }
-    else{
+    if(nextStage === undefined && searchIdx == CALIB_ORDER.length){
+      this.status.calibCompleted = true;
+    }
+
+    if(this.status.calibCompleted){
       for(searchIdx = 0; searchIdx < VERIFY_ORDER.length; searchIdx++){
         if(!this.stages.verify[VERIFY_ORDER[searchIdx]].completed){
           nextStage = VERIFY_ORDER[searchIdx]
           break;
         }
       }
+      if(nextStage === undefined && searchIdx == VERIFY_ORDER.length){
+        this.status.verifyCompleted = true;
+      }
     }
-    var nextStageMethodName = camelCase("run_" + nextStage);
 
-    var nextStageMethod = this[nextStageMethodName];
+    this.status.completed = this.status.calibCompleted && this.status.verifyCompleted;
+    
+    return nextStage;
+  }
 
-    if(nextStageMethod === undefined){
+  async startNextStage() {
+    var nextStage = this.checkStageProgress();
+    if( nextStage !== undefined){
+      this.status.lastStageStartTime = process.uptime();
+      await this.runStage(nextStage);
+    }
+  }
+
+  async runStage(stage) {
+    var stageMethodName = camelCase("run_" + stage);
+
+    var stageMethod = this[stageMethodName];
+
+    if(stageMethod === undefined){
       console.log('Failed to select next stage to run');
       this.actualState = STATE_ERROR;
       return;
     }
     
-    console.log("Running stage method: " + nextStageMethodName)
+    console.log("Running stage method: " + stageMethodName)
     // await this.rockhopperClient.waitForDoneAndIdle();
-    this.status.currentStage = nextStage;
+    this.status.currentStage = stage;
+    await this.sendUpdate();
     try{
-      if(this.processType === PROCESS_RESUME && LOADABLE_STAGES.has(nextStage) && checkSaveFileExists(nextStage)){
-        console.log('Loading progress for stage ' + nextStage);
-        this.loadStageProgress(nextStage)
+      if(this.processType === PROCESS_RESUME && LOADABLE_STAGES.has(stage) && checkSaveFileExists(stage)){
+        console.log('Loading progress for stage ' + stage);
+        this.loadStageProgress(stage)
       }
       else{
         this.actualState = this.commandedState // commandedState should be either RUN or STEP at this point
-        return await this[nextStageMethodName]()
+        return await this[stageMethodName]()
       }
     }
     catch (err) {
