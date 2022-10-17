@@ -9,6 +9,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "archiver": "^5.3.1",
+    "basic-ftp": "^5.0.2",
     "node-gyp": "^9.1.0",
     "to-camel-case": "^1.0.0",
     "websocket": "^1.0.34",

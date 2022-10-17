@@ -5,6 +5,8 @@ const fs = require('fs');
 const camelCase = require('to-camel-case');
 const { RockhopperClient } = require('./rockhopper');
 const { CommandServer } = require('./command-server');
+const ftp = require("basic-ftp");
+var archiver = require('archiver');
 
 
 const POCKETNC_VAR_DIRECTORY = process.env.POCKETNC_VAR_DIRECTORY;
@@ -12,6 +14,7 @@ const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
 const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
 const OVERLAY_PATH = POCKETNC_VAR_DIRECTORY + '/CalibrationOverlay.inc';
 const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
+const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
 
 
 async function copyExistingOverlay() {
@@ -31,6 +34,31 @@ async function copyNewCompFilesToVarDir() {
     console.log('Error copying new comp files to VAR dir')
   }
 }
+
+
+/**
+ * @param {String} sourceDir: /some/folder/to/compress
+ * @param {String} outPath: /path/to/created.zip
+ * @returns {Promise}
+ * Source: https://stackoverflow.com/a/51518100/12222371
+ */
+function zipDirectory(sourceDir, outPath) {
+  const archive = archiver('zip', { zlib: { level: 9 }});
+  const stream = fs.createWriteStream(outPath);
+
+  return new Promise((resolve, reject) => {
+    archive
+      .directory(sourceDir, false)
+      .on('error', err => reject(err))
+      .pipe(stream)
+    ;
+
+    stream.on('close', () => resolve());
+    archive.finalize();
+  });
+}
+
+
 
 function readCompensationFiles() {
   var aData = fs.readFileSync(A_COMP_PATH, 'ascii');
@@ -86,7 +114,8 @@ const STAGES = {
   VERIFY_A: 'VERIFY_A',
   VERIFY_B: 'VERIFY_B',
   CALC_VERIFY: 'CALC_VERIFY',
-  WRITE_VERIFY: 'WRITE_VERIFY'
+  WRITE_VERIFY: 'WRITE_VERIFY',
+  UPLOAD_FILES: 'UPLOAD_FILES',
 }
 
 const LOADABLE_STAGE_LIST = [STAGES.PROBE_MACHINE_POS, STAGES.PROBE_SPINDLE_POS,
@@ -161,6 +190,7 @@ const VERIFY_ORDER = [
   STAGES.VERIFY_B, 
   STAGES.CALC_VERIFY,
   STAGES.WRITE_VERIFY,
+  STAGES.UPLOAD_FILES,
 ]
 
 
@@ -414,8 +444,8 @@ class CalibProcess {
     await this.sendUpdate()
   }
   checkAutoProgressStage() {
-    console.log("checkAutoProgressStage", this.status.lastStageCompleteTime, this.status.lastStageStartTime, this.actualState, this.commandedState, this.managerStatus.cmm_error);
-    return (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
+    console.log("checkAutoProgressStage", this.status.completed, this.status.lastStageCompleteTime, this.status.lastStageStartTime, this.actualState, this.commandedState, this.managerStatus.cmm_error);
+    return this.status.completed && (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
@@ -904,6 +934,29 @@ class CalibProcess {
   async runWriteVerify(){
     console.log('runWriteVerify');
     await this.rockhopperClient.runToCompletion('v2_calib_write_verify.ngc');
+  }
+  async runUploadFiles(){
+    console.log('runUploadFiles');
+    var dateString = new Date(Date.now()).toDateString();
+    var detailsName = "details_" + this.serialNum + "_" + dateString + ".zip";
+    var resultsName = "calib_" + this.serialNum + "_" + dateString + ".zip";
+
+    zipDirectory(RESULTS_DIR, POCKETNC_VAR_DIRECTORY + "/" + resultsName).then(() => {}).catch((err) => (console.log('Error zipping results dir' + err)));
+    zipDirectory(CALIB_DIR, POCKETNC_VAR_DIRECTORY + "/" + detailsName).then(() => {}).catch((err) => (console.log('Error zipping calib dir' + err)));
+    const client = new ftp.Client();
+    try {
+      await client.access({
+        host: "10.0.0.10",
+        port: 5000
+      });
+      
+      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
+      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+    } catch(err) {
+      console.log(err);
+    }
+  
+    client.close();
   }
 }
 
