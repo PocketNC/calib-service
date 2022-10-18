@@ -183,10 +183,8 @@ const VERIFY_ORDER = [
   STAGES.SETUP_CNC_VERIFY,
   STAGES.SETUP_CMM,
   STAGES.SETUP_VERIFY,
-  //'VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
-  // STAGES.VERIFY_A_HOMING, 
+  //VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
   STAGES.VERIFY_A, 
-  // STAGES.VERIFY_B_HOMING, 
   STAGES.VERIFY_B, 
   STAGES.CALC_VERIFY,
   STAGES.WRITE_VERIFY,
@@ -220,6 +218,7 @@ class CalibProcess {
       errorMsg: null,
       calibCompleted: false,
       verifyCompleted: false,
+      completed: false,
     }
 
     this.rockhopperClient = new RockhopperClient();
@@ -233,6 +232,7 @@ class CalibProcess {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
     }
+
     this.managerStages = {};
     this.managerStatus = {};
 
@@ -445,7 +445,7 @@ class CalibProcess {
   }
   checkAutoProgressStage() {
     console.log("checkAutoProgressStage", this.status.completed, this.status.lastStageCompleteTime, this.status.lastStageStartTime, this.actualState, this.commandedState, this.managerStatus.cmm_error);
-    return this.status.completed && (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
+    return !this.status.completed && (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
@@ -937,9 +937,13 @@ class CalibProcess {
   }
   async runUploadFiles(){
     console.log('runUploadFiles');
-    var dateString = new Date(Date.now()).toDateString();
-    var detailsName = "details_" + this.serialNum + "_" + dateString + ".zip";
-    var resultsName = "calib_" + this.serialNum + "_" + dateString + ".zip";
+    var date = new Date();
+    let year = date.getFullYear();
+    let month = date.getMonth() + 1;
+    let day = date.getDate();
+
+    var detailsName = ["details", this.serialNum, year, month, day].join("-") + ".zip";
+    var resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
 
     zipDirectory(RESULTS_DIR, POCKETNC_VAR_DIRECTORY + "/" + resultsName).then(() => {}).catch((err) => (console.log('Error zipping results dir' + err)));
     zipDirectory(CALIB_DIR, POCKETNC_VAR_DIRECTORY + "/" + detailsName).then(() => {}).catch((err) => (console.log('Error zipping calib dir' + err)));

@@ -9,7 +9,7 @@ const { CalibManagerWorker } = require('./calib-manager-worker');
 var serialNum = null;
 process.argv.forEach(function (val, index, array) {
   console.log(index + ': ' + val);
-  if(index === 3){
+  if(index === 2){
     serialNum = val;
   }
 });
