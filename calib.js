@@ -10,6 +10,7 @@ const ftp = require("basic-ftp");
 var archiver = require('archiver');
 
 
+const POCKETNC_DIRECTORY = process.env.POCKETNC_DIRECTORY;
 const POCKETNC_VAR_DIRECTORY = process.env.POCKETNC_VAR_DIRECTORY;
 const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
 const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
@@ -18,7 +19,9 @@ const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
 const CALIB_LOG = CALIB_DIR + '/calib.log';
 const SERVICE_LOG = CALIB_DIR + '/calib-service.log';
-
+const DEFAULT_10_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/CalibrationOverlay.inc.default';
+const DEFAULT_50_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/features/high_speed_spindle/CalibrationOverlay.inc.default';
+const XYZ_FILE_PATH = POCKETNC_VAR_DIRECTORY + '/xyz.txt';
 
 
 async function copyExistingOverlay() {
@@ -60,6 +63,17 @@ async function resetCalibDir() {
   await deleteProgressFiles();
   await deleteSaveFiles();
   await deleteDataFiles();
+}
+async function copyDefaultOverlay(variant) {
+  if(variant === "50"){
+    await Promise.all([ execPromise(`cp ${DEFAULT_50_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
+    return true
+  }
+  else if(variant === "10"){
+    await Promise.all([ execPromise(`cp ${DEFAULT_10_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
+    return true
+  }
+  else{console.log('Variant type not specified, failed to copy'); return false}
 }
 
 /**
@@ -108,6 +122,37 @@ function checkSaveFileExists(stage) {
   }
 }
 
+function readXYZ(){
+  var data = fs.readFileSync(XYZ_FILE_PATH, 'ascii');
+  var [x,y,z] = data.split(',').map(Number);
+  return [x,y,z];
+}
+function clearXYZFile() {
+  if (fs.existsSync(XYZ_FILE_PATH)) {
+    fs.writeFileSync(XYZ_FILE_PATH, "");
+  }
+}
+function isFileReady(file) {
+  var ready = false;
+  if(fs.existsSync(file)){
+    try{
+      var data = fs.readFileSync(file, 'ascii');
+      // fs.open(file, 'r', (err) => console.log(err));
+      return (data.length > 2);
+    }
+    catch (err){
+      
+    }
+  }
+  return ready
+}
+
+async function waitUntilFileIsReady(file) {
+  while(!isFileReady(file)){
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
 const STAGES = {
   ERASE_COMPENSATION: 'ERASE_COMPENSATION',
   SETUP_CNC_CALIB: 'SETUP_CNC_CALIB',
@@ -134,6 +179,7 @@ const STAGES = {
   RESTART_CNC: 'RESTART_CNC',
   SETUP_CNC_VERIFY: 'SETUP_CNC_VERIFY',
   SETUP_VERIFY: 'SETUP_VERIFY',
+  TOOL_PROBE_OFFSET: 'TOOL_PROBE_OFFSET',
   // VERIFY_A_HOMING: 'VERIFY_A_HOMING',
   // VERIFY_B_HOMING: 'VERIFY_B_HOMING',
   VERIFY_A: 'VERIFY_A',
@@ -194,10 +240,10 @@ const CALIB_ORDER = [
   STAGES.CHARACTERIZE_X,
   STAGES.HOMING_Z,
   STAGES.CHARACTERIZE_Z,
-  STAGES.PROBE_TOP_PLANE,
   STAGES.PROBE_FIXTURE_BALL_POS,
   STAGES.HOMING_Y,
   STAGES.CHARACTERIZE_Y,
+  STAGES.PROBE_TOP_PLANE,
   STAGES.SETUP_CNC_CSY,
   STAGES.HOMING_A,
   STAGES.HOMING_B,
@@ -211,6 +257,7 @@ const VERIFY_ORDER = [
   STAGES.SETUP_CNC_VERIFY,
   STAGES.SETUP_CMM,
   STAGES.SETUP_VERIFY,
+  STAGES.TOOL_PROBE_OFFSET,
   //VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
   STAGES.VERIFY_A,
   STAGES.VERIFY_B,
@@ -225,8 +272,9 @@ const Y_POS_PROBING = -63;
 
 //------GLOBALS------
 class CalibProcess {
-  constructor(serialNum) {
+  constructor(serialNum, variant) {
     this.serialNum = serialNum;
+    this.variant = variant;
 
     this.processType = PROCESS_NEW;
     // this.processType = PROCESS_RESUME;
@@ -621,6 +669,7 @@ class CalibProcess {
   async runEraseCompensation(){//TODO rename this stage to SETUP_FILES or similar
     console.log('runEraseCompensation');
 
+    await copyDefaultOverlay(this.variant);
     await resetCalibDir();
 
     var comps = await readCompensationFiles();
@@ -860,6 +909,60 @@ class CalibProcess {
     console.log('runSetupVerify');
     await this.rockhopperClient.runToCompletion('v2_calib_setup_verify.ngc');
   }
+  async runToolProbeOffset() {
+    console.log('runToolProbeOffset');
+    /*
+    perform a tool probe
+    move for clearance
+    at position where tool probe touch occurred, probe spindle tip with CMM
+    probe the fixture plane at Y0 A90
+    calculate PROBE_SENSOR_123_OFFSET
+    use difference in Z-position between this spindle position and the plane at Y0A90 to calculate PROBE_SENSOR_123_OFFSET
+    PROBE_SENSOR_123_OFFSET = TOOL_PROBE_Z - (FIXTURE_PLANE_Z - 1" + 3") (minus 1" for fixture thickness, plus 3" for long side of 123 block)
+    */
+
+    // perform a tool probe
+    clearXYZFile()
+    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 A0`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 X38.3 Y-60.6`);
+    if(this.variant === '10'){
+      await this.rockhopperClient.mdiCmdAsync(`G0 Z-72`);
+    }
+    else if(this.variant === '50'){
+      await this.rockhopperClient.mdiCmdAsync(`G0 Z-50`);
+    }
+    await this.rockhopperClient.mdiCmdAsync(`M662 K-10`);
+    await new Promise(r => setTimeout(r, 1000));
+    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
+    await waitUntilFileIsReady(XYZ_FILE_PATH)
+    var [x,y,z] = readXYZ();
+
+    //move for clearance
+    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
+
+    //at position where tool probe touch occurred, probe spindle tip with CMM
+    if( !this.checkContinueCurrentStage() ){
+      return;
+    }
+    await this.rockhopperClient.mdiCmdAsync(`G0 Z${z}`);
+    await this.rockhopperClient.runToCompletion('v2_calib_probe_spindle_at_tool_probe.ngc');
+    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
+
+    //probe the fixture plane at Y0 A90
+    if( !this.checkContinueCurrentStage() ){
+      return;
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_probe_fixture_plane_a90.ngc');
+
+    //calculate PROBE_SENSOR_123_OFFSET
+    if( !this.checkContinueCurrentStage() ){
+      return;
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_tool_probe_offset.ngc');
+  }
   // async runVerifyAHoming(){
   //   console.log('runVerifyAHoming');
   //   await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
@@ -884,7 +987,7 @@ class CalibProcess {
   // }
   async runVerifyA(){
     console.log('runVerifyA');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 A0Y${Y_POS_PROBING}`);
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
     while(true){
