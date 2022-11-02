@@ -226,6 +226,11 @@ const PROCESS_VERIFY = "verify"
 
 const ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD = 0.01;
 
+const Y_POS_PROBING = -63;
+const NUM_HOME_REPEATABILITY_SAMPLES = 5;
+const NUM_VERIFY_HOME_ATTEMPTS = 10;
+
+
 //#endregion
 
 
@@ -267,7 +272,6 @@ const VERIFY_ORDER = [
 ]
 
 
-const Y_POS_PROBING = -63;
 
 
 //------GLOBALS------
@@ -743,7 +747,7 @@ class CalibProcess {
   }
   async runHomingX(){
     console.log('runHomingX');
-    for(let idx = 0; idx < 5; idx++){
+    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
       console.log('runHomingX ' + idx);
       await this.rockhopperClient.mdiCmdAsync("G0 X60");
       await this.rockhopperClient.unhomeAxisAsync([0]);
@@ -763,7 +767,7 @@ class CalibProcess {
   async runHomingY(){
     console.log('runHomingY');
     await this.rockhopperClient.mdiCmdAsync("o<cmm_go_to_clearance_z> call");
-    for(let idx = 0; idx < 5; idx++){
+    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
@@ -781,12 +785,12 @@ class CalibProcess {
   async runHomingZ(){
     console.log('runHomingZ');
     await this.rockhopperClient.mdiCmdAsync("G0 X0");
-    for(let idx = 0; idx < 5; idx++){
+    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc')
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(idx < 4){
+      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
         await this.rockhopperClient.mdiCmdAsync("G0 Z-3.5");
         await this.rockhopperClient.unhomeAxisAsync([2]);
         await this.rockhopperClient.homeAxisAsync([2]);
@@ -809,7 +813,7 @@ class CalibProcess {
   async runHomingA(){
     console.log('runHomingA');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    for(let idx = 0; idx < 5; idx++){
+    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
 
       if( !this.checkContinueCurrentStage() ){
@@ -831,7 +835,7 @@ class CalibProcess {
   async runHomingB(){
     console.log('runHomingB');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    for(let idx = 0; idx < 5; idx++){
+    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
@@ -1003,9 +1007,9 @@ class CalibProcess {
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > 10){
+      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
         console.log("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
-        threshold = threshold * 10; //TODO delete this and uncomment next 3 lines
+        threshold = threshold * 10; //TODO change this so process stops. Delete this threshold expansion and uncomment next 3 lines
         // this.actualState = STATE_FAIL
         // this.stages.verify[STAGES.VERIFY_A].failed = true
         // return;
