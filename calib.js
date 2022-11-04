@@ -52,7 +52,7 @@ async function deleteSaveFiles() {
   await Promise.all([ execPromise(`rm -f cnc_csy_savefile part_csy_savefile`, {cwd: `${CALIB_DIR}`} )]);
 }
 async function deleteDataFiles() {
-  await Promise.all([ execPromise(`rm -f a.comp a.comp.raw a.err b.comp b.comp.raw b.err ver_a.err ver_b.err`, {cwd: `${CALIB_DIR}`}  )]);
+  await Promise.all([ execPromise(`rm -f CalibrationOverlay.inc a.comp a.comp.raw a.err b.comp b.comp.raw b.err ver_a.err ver_b.err`, {cwd: `${CALIB_DIR}`}  )]);
 }
 async function resetCalibDir() {
   await clearLogFiles();
