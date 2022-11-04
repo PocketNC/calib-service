@@ -670,35 +670,29 @@ class CalibProcess {
   }
 
   //STAGE METHODS
-  async runEraseCompensation(){//TODO rename this stage to SETUP_FILES or similar
+  async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
     console.log('runEraseCompensation');
 
     await copyDefaultOverlay(this.variant);
     await resetCalibDir();
 
-    var comps = await readCompensationFiles();
-    if(comps.a.length > 2 || comps.b.length > 2 ){
-      clearCompensationFiles();
-      console.log('Compensation files cleared, restarting services.');
-      await this.rockhopperClient.restartServices();
+    clearCompensationFiles();
+    console.log('Compensation files cleared, restarting services.');
+    await this.rockhopperClient.restartServices();
 
-      //This delay is intended to ensure that the current rockhopper process has halted before we begin polling for connection
-      await new Promise(r => setTimeout(r, 3000));
+    //This delay is intended to ensure that the current rockhopper process has halted before we begin polling for connection
+    await new Promise(r => setTimeout(r, 3000));
 
-      this.rockhopperClient.connected = false;
-      var waitCount = 0;
-      while(!this.rockhopperClient.connected){
-        await new Promise(r => setTimeout(r, 1000));
-        waitCount++;
-        if(waitCount % 5 === 0){
-          console.log('Waiting for rockhopper restart')
-        }
+    this.rockhopperClient.connected = false;
+    var waitCount = 0;
+    while(!this.rockhopperClient.connected){
+      await new Promise(r => setTimeout(r, 1000));
+      waitCount++;
+      if(waitCount % 5 === 0){
+        console.log('Waiting for rockhopper restart')
       }
-      console.log('Reconnected to Rockhopper after service restart');
     }
-    else{
-      console.log('Compensation already cleared');
-    }
+    console.log('Reconnected to Rockhopper after service restart');
 
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
@@ -768,6 +762,7 @@ class CalibProcess {
     console.log('runHomingY');
     await this.rockhopperClient.mdiCmdAsync("o<cmm_go_to_clearance_z> call");
     for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+      console.log('runHomingY ' + idx);
       await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
@@ -786,7 +781,8 @@ class CalibProcess {
     console.log('runHomingZ');
     await this.rockhopperClient.mdiCmdAsync("G0 X0");
     for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc')
+      console.log('runHomingZ ' + idx);
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -820,7 +816,7 @@ class CalibProcess {
         return;
       }
 
-      if(idx < 4){
+      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
         await this.rockhopperClient.mdiCmdAsync("G0 A-10");
         await this.rockhopperClient.unhomeAxisAsync([3]);
         await this.rockhopperClient.homeAxisAsync([3]);
@@ -840,7 +836,7 @@ class CalibProcess {
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(idx < 4){
+      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
         await this.rockhopperClient.mdiCmdAsync("G0 B-10");
         await this.rockhopperClient.unhomeAxisAsync([4]);
         await this.rockhopperClient.homeAxisAsync([4]);
@@ -934,7 +930,7 @@ class CalibProcess {
       await this.rockhopperClient.mdiCmdAsync(`G0 Z-72`);
     }
     else if(this.variant === '50'){
-      await this.rockhopperClient.mdiCmdAsync(`G0 Z-50`);
+      await this.rockhopperClient.mdiCmdAsync(`G0 Z-55`);
     }
     await this.rockhopperClient.mdiCmdAsync(`M662 K-10`);
     await new Promise(r => setTimeout(r, 1000));
@@ -1036,7 +1032,7 @@ class CalibProcess {
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > 10){
+      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
         console.log("Halting B-axis homing verification, unable to achieve home position with error <0.01");
         threshold = threshold * 10; //TODO delete this and uncomment next 3 lines
         // this.actualState = STATE_FAIL
