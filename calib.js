@@ -233,6 +233,9 @@ const NUM_VERIFY_HOME_ATTEMPTS = 10;
 
 const ROTARY_HOMING_POSITIONS = [-20, 0, 20]
 
+const DEFAULT_B_HOME_OFFSET = -5.5
+const DEFAULT_A_HOME_OFFSET = -17.5
+
 
 //#endregion
 
@@ -812,6 +815,8 @@ class CalibProcess {
   async runHomingA(){
     console.log('runHomingA');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+    await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
+
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
 
@@ -826,6 +831,24 @@ class CalibProcess {
         await this.rockhopperClient.homeAxisAsync([3]);
       }
     }
+    //ensure we've reset home_offset before moving on, a crash could occur otherwise
+    while(true){
+      await Promise.all([ execPromise(`halcmd -s setp ini.3.home_offset ${DEFAULT_A_HOME_OFFSET}` )]);
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.3.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      if(curr === DEFAULT_A_HOME_OFFSET){
+        break;
+      }
+      else{
+        console.log("Failed to reset A home offset");
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    await this.rockhopperClient.unhomeAxisAsync([3]);
+    await this.rockhopperClient.homeAxisAsync([3]);
+
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
   }
   async runCharacterizeA(){
@@ -835,6 +858,8 @@ class CalibProcess {
   async runHomingB(){
     console.log('runHomingB');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+    await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
+
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
       if( !this.checkContinueCurrentStage() ){
@@ -847,6 +872,25 @@ class CalibProcess {
         await this.rockhopperClient.homeAxisAsync([4]);
       }
     }
+
+    //ensure we've reset home_offset before moving on, a crash could occur otherwise
+    while(true){
+      await Promise.all([ execPromise(`halcmd -s setp ini.4.home_offset ${DEFAULT_B_HOME_OFFSET}` )]);
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.4.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      if(curr === DEFAULT_B_HOME_OFFSET){
+        break;
+      }
+      else{
+        console.log("Failed to reset B home offset");
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    await this.rockhopperClient.unhomeAxisAsync([4]);
+    await this.rockhopperClient.homeAxisAsync([4]);
+
     await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
   }
   async runCharacterizeB(){
