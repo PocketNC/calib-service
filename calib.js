@@ -227,8 +227,11 @@ const PROCESS_VERIFY = "verify"
 const ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD = 0.01;
 
 const Y_POS_PROBING = -63;
-const NUM_HOME_REPEATABILITY_SAMPLES = 5;
+const NUM_SAMPLES_HOME_REPEAT_LINEAR = 5;
+const NUM_SAMPLES_HOME_REPEAT_ROTARY = 12;
 const NUM_VERIFY_HOME_ATTEMPTS = 10;
+
+const ROTARY_HOMING_POSITIONS = [-20, 0, 20]
 
 
 //#endregion
@@ -741,7 +744,7 @@ class CalibProcess {
   }
   async runHomingX(){
     console.log('runHomingX');
-    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingX ' + idx);
       await this.rockhopperClient.mdiCmdAsync("G0 X60");
       await this.rockhopperClient.unhomeAxisAsync([0]);
@@ -761,7 +764,7 @@ class CalibProcess {
   async runHomingY(){
     console.log('runHomingY');
     await this.rockhopperClient.mdiCmdAsync("o<cmm_go_to_clearance_z> call");
-    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingY ' + idx);
       await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
       if( !this.checkContinueCurrentStage() ){
@@ -780,13 +783,13 @@ class CalibProcess {
   async runHomingZ(){
     console.log('runHomingZ');
     await this.rockhopperClient.mdiCmdAsync("G0 X0");
-    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingZ ' + idx);
       await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
+      if(idx < NUM_SAMPLES_HOME_REPEAT_LINEAR - 1){
         await this.rockhopperClient.mdiCmdAsync("G0 Z-3.5");
         await this.rockhopperClient.unhomeAxisAsync([2]);
         await this.rockhopperClient.homeAxisAsync([2]);
@@ -809,15 +812,16 @@ class CalibProcess {
   async runHomingA(){
     console.log('runHomingA');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
 
       if( !this.checkContinueCurrentStage() ){
         return;
       }
 
-      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
-        await this.rockhopperClient.mdiCmdAsync("G0 A-10");
+      if(idx < NUM_SAMPLES_HOME_REPEAT_ROTARY - 1){
+        const goto = ROTARY_HOMING_POSITIONS[idx%ROTARY_HOMING_POSITIONS.length]
+        await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
         await this.rockhopperClient.unhomeAxisAsync([3]);
         await this.rockhopperClient.homeAxisAsync([3]);
       }
@@ -831,13 +835,14 @@ class CalibProcess {
   async runHomingB(){
     console.log('runHomingB');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    for(let idx = 0; idx < NUM_HOME_REPEATABILITY_SAMPLES; idx++){
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(idx < NUM_HOME_REPEATABILITY_SAMPLES - 1){
-        await this.rockhopperClient.mdiCmdAsync("G0 B-10");
+      if(idx < NUM_SAMPLES_HOME_REPEAT_ROTARY - 1){
+        const goto = ROTARY_HOMING_POSITIONS[idx%ROTARY_HOMING_POSITIONS.length]
+        await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
         await this.rockhopperClient.unhomeAxisAsync([4]);
         await this.rockhopperClient.homeAxisAsync([4]);
       }
@@ -932,7 +937,7 @@ class CalibProcess {
     else if(this.variant === '50'){
       await this.rockhopperClient.mdiCmdAsync(`G0 Z-55`);
     }
-    await this.rockhopperClient.mdiCmdAsync(`M662 K-10`);
+    await this.rockhopperClient.mdiCmdAsync(`M662 K-15`);
     await new Promise(r => setTimeout(r, 1000));
     await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
     await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
@@ -1010,7 +1015,7 @@ class CalibProcess {
         // this.stages.verify[STAGES.VERIFY_A].failed = true
         // return;
       }
-      await this.rockhopperClient.mdiCmdAsync("G0 A-10");
+      await this.rockhopperClient.mdiCmdAsync("G0 A-5");
       await this.rockhopperClient.unhomeAxisAsync([3]);
       await this.rockhopperClient.homeAxisAsync([3]);
     }
@@ -1039,7 +1044,7 @@ class CalibProcess {
         // this.stages.verify[STAGES.VERIFY_B].failed = true
         // return;
       }
-      await this.rockhopperClient.mdiCmdAsync("G0 B-10");
+      await this.rockhopperClient.mdiCmdAsync("G0 B-5");
       await this.rockhopperClient.unhomeAxisAsync([4]);
       await this.rockhopperClient.homeAxisAsync([4]);
     }
