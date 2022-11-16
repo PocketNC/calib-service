@@ -180,8 +180,8 @@ const STAGES = {
   SETUP_CNC_VERIFY: 'SETUP_CNC_VERIFY',
   SETUP_VERIFY: 'SETUP_VERIFY',
   TOOL_PROBE_OFFSET: 'TOOL_PROBE_OFFSET',
-  // VERIFY_A_HOMING: 'VERIFY_A_HOMING',
-  // VERIFY_B_HOMING: 'VERIFY_B_HOMING',
+  VERIFY_A_HOMING: 'VERIFY_A_HOMING',
+  VERIFY_B_HOMING: 'VERIFY_B_HOMING',
   VERIFY_A: 'VERIFY_A',
   VERIFY_B: 'VERIFY_B',
   CALC_VERIFY: 'CALC_VERIFY',
@@ -231,9 +231,10 @@ const NUM_SAMPLES_HOME_REPEAT_LINEAR = 5;
 const NUM_SAMPLES_HOME_REPEAT_ROTARY = 12;
 const NUM_VERIFY_HOME_ATTEMPTS = 10;
 
-const ROTARY_HOMING_POSITIONS = [-20, 0, 20]
+const B_HOMING_POSITIONS = [-20, 0, 20]
+const A_HOMING_POSITIONS = [-5, 0, 20]
 
-const DEFAULT_B_HOME_OFFSET = -5.5
+const DEFAULT_B_HOME_OFFSET = -5.0
 const DEFAULT_A_HOME_OFFSET = -17.5
 
 
@@ -270,7 +271,9 @@ const VERIFY_ORDER = [
   STAGES.SETUP_VERIFY,
   STAGES.TOOL_PROBE_OFFSET,
   //VERIFY_X, STAGES.VERIFY_Y, STAGES.VERIFY_Z,
+  STAGES.VERIFY_A_HOMING,
   STAGES.VERIFY_A,
+  STAGES.VERIFY_B_HOMING,
   STAGES.VERIFY_B,
   STAGES.CALC_VERIFY,
   STAGES.WRITE_VERIFY,
@@ -319,6 +322,33 @@ class CalibProcess {
       calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
       verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
     }
+    // this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
+    //  this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true
+    //  this.stages.calib[STAGES.SETUP_CMM].completed = true
+    //  this.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true
+    //  this.stages.calib[STAGES.SETUP_PART_CSY].completed = true
+    //  this.stages.calib[STAGES.PROBE_SPINDLE_POS].completed = true
+    //  this.stages.calib[STAGES.HOMING_X].completed = true
+    //  this.stages.calib[STAGES.HOMING_Y].completed = true
+    //  this.stages.calib[STAGES.HOMING_Z].completed = true
+    //  this.stages.calib[STAGES.HOMING_A].completed = true
+    //  this.stages.calib[STAGES.HOMING_B].completed = true
+    //  this.stages.calib[STAGES.CHARACTERIZE_X].completed = true
+    //  this.stages.calib[STAGES.CHARACTERIZE_Z].completed = true
+    //  this.stages.calib[STAGES.PROBE_TOP_PLANE].completed = true
+    //  this.stages.calib[STAGES.PROBE_FIXTURE_BALL_POS].completed = true
+    //  this.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
+    //  this.stages.calib[STAGES.SETUP_CNC_CSY].completed = true
+    //  this.stages.calib[STAGES.CHARACTERIZE_A].completed = true
+    //  this.stages.calib[STAGES.CHARACTERIZE_B].completed = true
+    //  this.stages.calib[STAGES.CALC_CALIB].completed = true
+    //  this.stages.calib[STAGES.WRITE_CALIB].completed = true
+
+    //  this.stages.verify[STAGES.RESTART_CNC].completed = true
+    //  this.stages.verify[STAGES.SETUP_CNC_VERIFY].completed = true
+    //  this.stages.verify[STAGES.SETUP_CMM].completed = true
+    //  this.stages.verify[STAGES.SETUP_VERIFY].completed = true
+    //  this.stages.verify[STAGES.TOOL_PROBE_OFFSET].completed = true
 
     this.managerStages = {};
     this.managerStatus = {};
@@ -815,20 +845,38 @@ class CalibProcess {
   async runHomingA(){
     console.log('runHomingA');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
+    while(true){
+      await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.3.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      if(curr === 0.0){
+        break;
+      }
+      else{
+        console.log("Failed to zero A home offset");
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
 
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
-
+      const goto = A_HOMING_POSITIONS[idx%A_HOMING_POSITIONS.length]
+      await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-
-      if(idx < NUM_SAMPLES_HOME_REPEAT_ROTARY - 1){
-        const goto = ROTARY_HOMING_POSITIONS[idx%ROTARY_HOMING_POSITIONS.length]
-        await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
-        await this.rockhopperClient.unhomeAxisAsync([3]);
-        await this.rockhopperClient.homeAxisAsync([3]);
+      await this.rockhopperClient.unhomeAxisAsync([3]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.homeAxisAsync([3]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
+      if( !this.checkContinueCurrentStage() ){
+        return;
       }
     }
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
@@ -858,18 +906,38 @@ class CalibProcess {
   async runHomingB(){
     console.log('runHomingB');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-    await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
+    while(true){
+      await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.4.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      if(curr === 0){
+        break;
+      }
+      else{
+        console.log("Failed to zero B home offset");
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
 
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
+      const goto = B_HOMING_POSITIONS[idx%B_HOMING_POSITIONS.length]
+      await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
       if( !this.checkContinueCurrentStage() ){
         return;
       }
-      if(idx < NUM_SAMPLES_HOME_REPEAT_ROTARY - 1){
-        const goto = ROTARY_HOMING_POSITIONS[idx%ROTARY_HOMING_POSITIONS.length]
-        await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
-        await this.rockhopperClient.unhomeAxisAsync([4]);
-        await this.rockhopperClient.homeAxisAsync([4]);
+      await this.rockhopperClient.unhomeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.homeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
+      if( !this.checkContinueCurrentStage() ){
+        return;
       }
     }
 
@@ -977,11 +1045,12 @@ class CalibProcess {
     await this.rockhopperClient.mdiCmdAsync(`G0 X38.3 Y-60.6`);
     if(this.variant === '10'){
       await this.rockhopperClient.mdiCmdAsync(`G0 Z-72`);
+      await this.rockhopperClient.mdiCmdAsync(`M662 K-15`);
     }
     else if(this.variant === '50'){
-      await this.rockhopperClient.mdiCmdAsync(`G0 Z-55`);
+      await this.rockhopperClient.mdiCmdAsync(`G0 Z-45`);
+      await this.rockhopperClient.mdiCmdAsync(`M662 K-25`);
     }
-    await this.rockhopperClient.mdiCmdAsync(`M662 K-15`);
     await new Promise(r => setTimeout(r, 1000));
     await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
     await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
@@ -1012,35 +1081,63 @@ class CalibProcess {
     }
     await this.rockhopperClient.runToCompletion('v2_calib_tool_probe_offset.ngc');
   }
-  // async runVerifyAHoming(){
-  //   console.log('runVerifyAHoming');
-  //   await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-  //   for(let idx = 0; idx < 5; idx++){
-  //     await this.rockhopperClient.programOpenCmd('v2_calib_probe_a_home.ngc')
-  //     await new Promise(r => setTimeout(r, 1000));
-  //     await this.rockhopperClient.cycleStart();
-  //     await this.rockhopperClient.waitForDoneAndIdle(1000);
+  async runVerifyAHoming(){
+    console.log('runVerifyAHoming');
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
 
-  //     if( !this.checkContinueCurrentStage() ){
-  //       return;
-  //     }
-  //     if(idx < 4){
-  //       await this.rockhopperClient.mdiCmdAsync("G0 A-10");
-  //       await this.rockhopperClient.unhomeAxisAsync([3]);
-  //       await this.rockhopperClient.homeAxisAsync([3]);
-  //     }
-  //   }
-  //   await new Promise(r => setTimeout(r, 1000));
-  //   await this.rockhopperClient.programOpenCmd('v2_calib_verify_a_homing.ngc');
-  //   await this.rockhopperClient.cycleStart();
-  // }
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
+      const goto = A_HOMING_POSITIONS[idx%A_HOMING_POSITIONS.length]
+      await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.unhomeAxisAsync([3]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.homeAxisAsync([3]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc')
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
+  }
   async runVerifyA(){
     console.log('runVerifyA');
+
+    while(true){
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.3.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd));
+
+      var aHomeOffset = curr + this.managerStatus.a_home.avg
+
+      await Promise.all([ execPromise(`halcmd -s setp ini.3.home_offset ${aHomeOffset}` )]);
+      
+      break;
+      // var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      // var idxStart = out[0].stdout.search("IN") + 2;
+      // var idxEnd = out[0].stdout.search("ini.4.home_offset");
+      // var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      // if(curr === 0.0){
+      //   break;
+      // }
+      // else{
+      //   console.log("Failed to zero A home offset");
+      //   await new Promise(r => setTimeout(r, 1000));
+      // }
+    }
+
     await this.rockhopperClient.mdiCmdAsync(`G0 A0Y${Y_POS_PROBING}`);
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
     while(true){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc')
 
       if( !this.checkContinueCurrentStage() ){
         return;
@@ -1065,12 +1162,64 @@ class CalibProcess {
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a.ngc');
   }
+  async runVerifyBHoming(){
+    console.log('runVerifyBHoming');
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
+      const goto = B_HOMING_POSITIONS[idx%B_HOMING_POSITIONS.length]
+      await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.unhomeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.homeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc');
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+    }
+
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
+    
+  }
   async runVerifyB(){
     console.log('runVerifyB');
+
+    while(true){
+      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      var idxStart = out[0].stdout.search("IN") + 2;
+      var idxEnd = out[0].stdout.search("ini.4.home_offset");
+      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd));
+
+      var bHomeOffset = curr + this.managerStatus.b_home.avg
+
+      await Promise.all([ execPromise(`halcmd -s setp ini.4.home_offset ${bHomeOffset}` )]);
+      
+      break;
+      // var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      // var idxStart = out[0].stdout.search("IN") + 2;
+      // var idxEnd = out[0].stdout.search("ini.4.home_offset");
+      // var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      // if(curr === 0.0){
+      //   break;
+      // }
+      // else{
+      //   console.log("Failed to zero A home offset");
+      //   await new Promise(r => setTimeout(r, 1000));
+      // }
+    }
+
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
     while(true){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc')
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc')
       if( !this.checkContinueCurrentStage() ){
         return;
       }
