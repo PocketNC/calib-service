@@ -171,6 +171,7 @@ const STAGES = {
   CHARACTERIZE_Z: 'CHARACTERIZE_Z',
   PROBE_TOP_PLANE: 'PROBE_TOP_PLANE',
   SETUP_CNC_CSY: 'SETUP_CNC_CSY',
+  PROBE_HOME_OFFSETS: 'PROBE_HOME_OFFSETS',
   CHARACTERIZE_A: 'CHARACTERIZE_A',
   CHARACTERIZE_B: 'CHARACTERIZE_B',
   CALC_CALIB: 'CALC_CALIB',
@@ -257,9 +258,11 @@ const CALIB_ORDER = [
   STAGES.CHARACTERIZE_Y,
   STAGES.PROBE_TOP_PLANE,
   STAGES.SETUP_CNC_CSY,
+  STAGES.PROBE_XY_HOME_OFFSETS,
   STAGES.HOMING_A,
   STAGES.HOMING_B,
-  STAGES.CHARACTERIZE_A, STAGES.CHARACTERIZE_B,
+  STAGES.CHARACTERIZE_A,
+  STAGES.CHARACTERIZE_B,
   STAGES.CALC_CALIB,
   STAGES.WRITE_CALIB,
 ]
@@ -841,6 +844,10 @@ class CalibProcess {
   async runSetupCncCsy(){
     console.log('runSetupCncCsy');
     await this.rockhopperClient.runToCompletion('v2_calib_setup_cnc_csy.ngc');
+  }
+  async runProbeHomeOffsets(){
+    console.log('runProbeHomeOffsets');
+    await this.rockhopperClient.runToCompletion('v2_calib_probe_home_offsets.ngc');
   }
   async runHomingA(){
     console.log('runHomingA');
