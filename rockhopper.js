@@ -40,6 +40,7 @@ class RockhopperClient {
       socket.on('close', this.socketAlwaysReconnect);
       socket.on('message', (data) => {
         const msg = JSON.parse(data.utf8Data);
+        console.log("received message", msg);
         if(this.callbacks[msg.id]){
           this.callbacks[msg.id](msg);
         }
@@ -120,21 +121,22 @@ class RockhopperClient {
     )
   }
 
-  runToCompletion = (filename) => {
+  runToCompletion = (filename, type="CALIBRATION") => {
     const id = "PUT_RUN_TO_COMPLETION_" + Date.now();
     return this.genCommandPromise({
       "0":filename,
-      "1":"PROGRAM",
+      "1":type,
       "id": id,
       "name":"run_to_completion",
       "command":"put",
     });
   }
 
-  programOpenCmd = (filename) => {
+  programOpenCmd = (filename, type="CALIBRATION") => {
+    console.log("programOpenCm", filename, type)
     return this.genCommandPromise({
       "0":filename,
-      "1":"PROGRAM",
+      "1":type,
       "id":"PUT_PROGRAM_OPEN_CMD",
       "name":"program_open_cmd",
       "command":"put",
