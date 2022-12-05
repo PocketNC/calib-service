@@ -4,7 +4,8 @@ const { RockhopperClient } = require('./rockhopper');
 async function main() {
   const rockhopperClient = new RockhopperClient();
 
-  await rockhopperClient.connect();
+  rockhopperClient.connect();
+  await rockhopperClient.successfulConnection();
 
   repl.start().context.rockhopperClient = rockhopperClient;
 }
