@@ -38,6 +38,7 @@ class RockhopperClient {
         console.log('Rockhopper Connection closed!');
       };
       socket.on('close', this.socketAlwaysReconnect);
+
       socket.on('message', (data) => {
         const msg = JSON.parse(data.utf8Data);
         console.log("received message", msg);
@@ -57,15 +58,12 @@ class RockhopperClient {
   genCommandPromise = (msgData) => {
     return new Promise((resolve, reject) => {
       const callback = (msg) => {
-        switch(msg.code){
-          case('?OK'):
-            this.unregisterCallback(msg.id);
-            resolve();
-          case('?ACK'):
-            //skip
-          case('?ERROR'):
-            this.unregisterCallback(msg.id);
-            reject();
+        if(msg.code === '?OK') {
+          this.unregisterCallback(msg.id);
+          resolve();
+        } else {
+          this.unregisterCallback(msg.id);
+          reject();
         }
       };
       this.registerCallback(msgData.id, callback);
@@ -75,12 +73,17 @@ class RockhopperClient {
 
   connect = () => {
     this.client.connect('ws://localhost:8000/websocket/');
+  };
 
+  // TODO - restructure always connect implementation/api
+  // for now this isn't used except for when testing/debugging
+  successfulConnection = () => {
     return new Promise((resolve) => {
       const unregisterAndResolve = () => {
         this.client.off("connect", unregisterAndResolve);
         resolve();
       }
+
       this.client.on("connect", unregisterAndResolve);
     })
   }

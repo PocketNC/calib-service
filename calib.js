@@ -570,15 +570,6 @@ class CalibProcess {
   checkContinueCurrentStage() {
     return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
   }
-  runIntervalConnectRockhopper() {
-    if(this.intervalConnectRockhopper !== false) { return }
-    this.intervalConnectRockhopper = setInterval(this.connectRockhopper, 3000)
-  }
-  stopIntervalConnectRockhopper() {
-    if(this.intervalConnectRockhopper === false) return
-    clearInterval(this.intervalConnectRockhopper)
-    this.intervalConnectRockhopper = false
-  }
   async getRockhopperConnection() {
     if(this.rockhopperConnection){
       return this.rockhopperConnection;
@@ -594,23 +585,19 @@ class CalibProcess {
     this.rockhopperClient.on('connectFailed', function(error) {
       this.rockhopperConnected = false;
       this.rockhopperConnection = undefined;
-      // this.runIntervalConnectRockhopper();
       console.log('Rockhopper Connect Error: ' + error.toString());
     });
     this.rockhopperClient.on('connect', function(connection) {
       this.rockhopperConnected = true;
       this.rockhopperConnection = connection;
-      this.stopIntervalConnectRockhopper();
       console.log('Rockhopper Connection established!');
       connection.on('error', function(error) {
         this.rockhopperConnected = false;
-        // this.runIntervalConnectRockhopper();
         console.log("Rockhopper Connection error: " + error.toString());
       });
       connection.on('close', function() {
         this.rockhopperConnected = false;
         this.rockhopperConnection = undefined;
-        // this.runIntervalConnectRockhopper();
         console.log('Rockhopper Connection closed!');
       });
       connection.on('message', function(message) {
