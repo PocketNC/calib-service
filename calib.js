@@ -687,6 +687,7 @@ class CalibProcess {
       }
     }
     catch (err) {
+      this.actualState = STATE_ERROR;
       console.log ('error:', err.message, err.stack)
     }
   }
