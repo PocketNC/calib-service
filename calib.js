@@ -1030,46 +1030,8 @@ class CalibProcess {
 
     // perform a tool probe
     clearXYZFile()
-    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
-    await this.rockhopperClient.mdiCmdAsync(`G0 A0`);
-    await this.rockhopperClient.mdiCmdAsync(`G0 X38.3 Y-60.6`);
-    if(this.variant === '10'){
-      await this.rockhopperClient.mdiCmdAsync(`G0 Z-72`);
-      await this.rockhopperClient.mdiCmdAsync(`M662 K-15`);
-    }
-    else if(this.variant === '50'){
-      await this.rockhopperClient.mdiCmdAsync(`G0 Z-45`);
-      await this.rockhopperClient.mdiCmdAsync(`M662 K-25`);
-    }
-    await new Promise(r => setTimeout(r, 1000));
-    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
-    await waitUntilFileIsReady(XYZ_FILE_PATH)
-    var [x,y,z] = readXYZ();
 
-    //move for clearance
-    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y63.5`);
-
-    //at position where tool probe touch occurred, probe spindle tip with CMM
-    if( !this.checkContinueCurrentStage() ){
-      return;
-    }
-    await this.rockhopperClient.mdiCmdAsync(`G0 Z${z}`);
     await this.rockhopperClient.runToCompletion('v2_calib_probe_spindle_at_tool_probe.ngc');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Z0`);
-
-    //probe the fixture plane at Y0 A90
-    if( !this.checkContinueCurrentStage() ){
-      return;
-    }
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_fixture_plane_a90.ngc');
-
-    //calculate PROBE_SENSOR_123_OFFSET
-    if( !this.checkContinueCurrentStage() ){
-      return;
-    }
-    await this.rockhopperClient.runToCompletion('v2_calib_tool_probe_offset.ngc');
   }
   async runVerifyAHoming(){
     console.log('runVerifyAHoming');
