@@ -282,10 +282,18 @@ const VERIFY_ORDER = [
   STAGES.UPLOAD_FILES,
 ]
 
+const V2_10 = "10";
+const V2_50 = "50";
+
 //------GLOBALS------
 class CalibProcess {
   constructor(serialNum, variant) {
+    console.log(`serialNum **${serialNum}**`);
+    console.log(`variant **${variant}**`);
     this.serialNum = serialNum;
+    if(variant !== V2_10 && variant !== V2_50) {
+      throw new Error(`Variant must be "${V2_10}" or "${V2_50}"`);
+    }
     this.variant = variant;
 
     this.processType = PROCESS_NEW;
@@ -756,7 +764,7 @@ class CalibProcess {
   }
   async runProbeSpindlePos(){
     console.log('runProbeSpindlePos');
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_spindle_pos.ngc')
+    await this.rockhopperClient.runToCompletion(`v2_calib_probe_spindle_pos_v2_${this.variant}.ngc`)
   }
   async runProbeFixtureBallPos(){
     console.log('runProbeFixtureBallPos');
@@ -781,16 +789,18 @@ class CalibProcess {
   }
   async runHomingY(){
     console.log('runHomingY');
-    await this.rockhopperClient.mdiCmdAsync("o<cmm_go_to_clearance_z> call");
+    await this.rockhopperClient.runToCompletion("cmm_go_to_clearance_y.ngc");
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingY ' + idx);
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.mdiCmdAsync("G0 Y60");
+
+      const y = (Math.random()*4-2)*25.4;
+      console.log(`G53 G0 Y${y}`);
+
+      await this.rockhopperClient.mdiCmdAsync(`G53 G0 Y${y}`);
       await this.rockhopperClient.unhomeAxisAsync([1]);
       await this.rockhopperClient.homeAxisAsync([1]);
+
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_y_home.ngc');
   }
@@ -800,18 +810,14 @@ class CalibProcess {
   }
   async runHomingZ(){
     console.log('runHomingZ');
-    await this.rockhopperClient.mdiCmdAsync("G0 X0");
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingZ ' + idx);
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc');
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      if(idx < NUM_SAMPLES_HOME_REPEAT_LINEAR - 1){
-        await this.rockhopperClient.mdiCmdAsync("G0 Z-3.5");
-        await this.rockhopperClient.unhomeAxisAsync([2]);
-        await this.rockhopperClient.homeAxisAsync([2]);
-      }
+      const z = (-Math.random()*2.5-.5)*25.4;
+      console.log(`G53 G0 Z${z}`);
+      await this.rockhopperClient.mdiCmdAsync(`G53 G0 Z${z}`);
+      await this.rockhopperClient.unhomeAxisAsync([2]);
+      await this.rockhopperClient.homeAxisAsync([2]);
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc')
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_z_home.ngc');
   }
