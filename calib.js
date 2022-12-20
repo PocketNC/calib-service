@@ -766,14 +766,12 @@ class CalibProcess {
     console.log('runHomingX');
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingX ' + idx);
-      await this.rockhopperClient.mdiCmdAsync("G0 X60");
+      const x = (Math.random()*4.5-2)*25.4;
+      console.log(`G53 G0 X${x}`);
+      await this.rockhopperClient.mdiCmdAsync(`G53 G0 X${x}`);
       await this.rockhopperClient.unhomeAxisAsync([0]);
       await this.rockhopperClient.homeAxisAsync([0]);
       await this.rockhopperClient.runToCompletion('v2_calib_probe_x_home.ngc')
-      if( !this.checkContinueCurrentStage() ){
-        console.log('ending homing x early')
-        return;
-      }
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_x_home.ngc');
   }
