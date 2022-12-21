@@ -772,6 +772,7 @@ class CalibProcess {
   }
   async runHomingX(){
     console.log('runHomingX');
+    await this.rockhopperClient.runToCompletion('v2_calib_init_x_home_state.ngc')
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingX ' + idx);
       const x = (Math.random()*4.5-2)*25.4;
@@ -789,7 +790,7 @@ class CalibProcess {
   }
   async runHomingY(){
     console.log('runHomingY');
-    await this.rockhopperClient.runToCompletion("cmm_go_to_clearance_y.ngc");
+    await this.rockhopperClient.runToCompletion('v2_calib_init_y_home_state.ngc')
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingY ' + idx);
 
@@ -810,6 +811,7 @@ class CalibProcess {
   }
   async runHomingZ(){
     console.log('runHomingZ');
+    await this.rockhopperClient.runToCompletion('v2_calib_init_z_home_state.ngc')
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingZ ' + idx);
       const z = (-Math.random()*2.5-.5)*25.4;
