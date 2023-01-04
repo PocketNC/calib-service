@@ -841,7 +841,8 @@ class CalibProcess {
   }
   async runHomingA(){
     console.log('runHomingA');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
+    await this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc')
     while(true){
       await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
       var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
@@ -858,8 +859,9 @@ class CalibProcess {
     }
 
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      const goto = A_HOMING_POSITIONS[idx%A_HOMING_POSITIONS.length]
-      await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
+      console.log('runHomingA ' + idx);
+      const a = (Math.random()*25-5);
+      await this.rockhopperClient.mdiCmdAsync(`G0 A${a}`);
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -895,6 +897,7 @@ class CalibProcess {
     await this.rockhopperClient.homeAxisAsync([3]);
 
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
+    await this.rockhopperClient.runToCompletion('v2_go_to_clearance_y.ngc');
   }
   async runCharacterizeA(){
     console.log('runCharacterizeA');
@@ -902,7 +905,8 @@ class CalibProcess {
   }
   async runHomingB(){
     console.log('runHomingB');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
+    await this.rockhopperClient.runToCompletion('v2_calib_init_b_home_state.ngc')
     while(true){
       await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
       var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
@@ -919,8 +923,9 @@ class CalibProcess {
     }
 
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      const goto = B_HOMING_POSITIONS[idx%B_HOMING_POSITIONS.length]
-      await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
+      console.log('runHomingB ' + idx);
+      const b = (Math.random()*40-20);
+      await this.rockhopperClient.mdiCmdAsync(`G0 B${b}`);
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -933,6 +938,7 @@ class CalibProcess {
         return;
       }
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
+      await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -957,6 +963,7 @@ class CalibProcess {
     await this.rockhopperClient.homeAxisAsync([4]);
 
     await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
+    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
   }
   async runCharacterizeB(){
     console.log('runCharacterizeB');
