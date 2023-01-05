@@ -1043,9 +1043,9 @@ class CalibProcess {
     */
 
     // perform a tool probe
-    clearXYZFile()
+    // clearXYZFile()
 
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_spindle_at_tool_probe.ngc');
+    await this.rockhopperClient.runToCompletion('v2_calib_tool_probe_offset.ngc');
   }
   async runVerifyAHoming(){
     console.log('runVerifyAHoming');
