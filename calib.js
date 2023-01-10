@@ -788,6 +788,10 @@ class CalibProcess {
     console.log('runCharacterizeX');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_x.ngc');
   }
+  async runCharacterizeXReverse(){
+    console.log('runCharacterizeX');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_x_reverse.ngc');
+  }
   async runHomingY(){
     console.log('runHomingY');
     await this.rockhopperClient.runToCompletion('v2_calib_init_y_home_state.ngc')
@@ -826,6 +830,10 @@ class CalibProcess {
   async runCharacterizeZ(){
     console.log('runCharacterizeZ');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_z.ngc');
+  }
+  async runCharacterizeZReverse(){
+    console.log('runCharacterizeZ');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_z_reverse.ngc');
   }
   async runProbeTopPlane(){
     console.log('runProbeTopPlane');
