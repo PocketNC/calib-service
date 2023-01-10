@@ -789,7 +789,7 @@ class CalibProcess {
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_x.ngc');
   }
   async runCharacterizeXReverse(){
-    console.log('runCharacterizeX');
+    console.log('runCharacterizeXReverse');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_x_reverse.ngc');
   }
   async runHomingY(){
@@ -813,6 +813,10 @@ class CalibProcess {
     console.log('runCharacterizeY');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_y.ngc');
   }
+  async runCharacterizeYReverse(){
+    console.log('runCharacterizeYReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_y_reverse.ngc');
+  }
   async runHomingZ(){
     console.log('runHomingZ');
     await this.rockhopperClient.runToCompletion('v2_calib_init_z_home_state.ngc')
@@ -832,7 +836,7 @@ class CalibProcess {
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_z.ngc');
   }
   async runCharacterizeZReverse(){
-    console.log('runCharacterizeZ');
+    console.log('runCharacterizeZReverse');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_z_reverse.ngc');
   }
   async runProbeTopPlane(){
