@@ -572,7 +572,8 @@ class CalibProcess {
     return !this.status.completed && (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
   }
   checkContinueCurrentStage() {
-    return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
+    // return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
+    return true;
   }
   async getRockhopperConnection() {
     if(this.rockhopperConnection){
@@ -907,13 +908,8 @@ class CalibProcess {
     }
     await this.rockhopperClient.unhomeAxisAsync([3]);
     await this.rockhopperClient.homeAxisAsync([3]);
-
+    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
-    await this.rockhopperClient.runToCompletion('v2_go_to_clearance_y.ngc');
-  }
-  async runCharacterizeA(){
-    console.log('runCharacterizeA');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a.ngc');
   }
   async runHomingB(){
     console.log('runHomingB');
@@ -977,9 +973,41 @@ class CalibProcess {
     await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
     await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
   }
-  async runCharacterizeB(){
-    console.log('runCharacterizeB');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b.ngc');
+  async runCharacterizeASphere(){
+    console.log('runCharacterizeASphere');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_sphere.ngc');
+  }
+  async runCharacterizeASphereReverse(){
+    console.log('runCharacterizeASphereReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_sphere_reverse.ngc');
+  }
+  async runCharacterizeBSphere(){
+    console.log('runCharacterizeBSphere');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_sphere.ngc');
+  }
+  async runCharacterizeBSphereReverse(){
+    console.log('runCharacterizeBSphereReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_sphere_reverse.ngc');
+  }
+  async runCharacterizeBReverse(){
+    console.log('runCharacterizeBReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_sphere_reverse.ngc');
+  }
+  async runCharacterizeALine(){
+    console.log('runCharacterizeALine');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_line.ngc');
+  }
+  async runCharacterizeALineReverse(){
+    console.log('runCharacterizeALineReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_line_reverse.ngc');
+  }
+  async runCharacterizeBLine(){
+    console.log('runCharacterizeBLine');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_line.ngc');
+  }
+  async runCharacterizeBLinesReverse(){
+    console.log('runCharacterizeBLineReverse');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_line_reverse.ngc');
   }
   async runCalcCalib(){
     console.log('runCalcCalib');
