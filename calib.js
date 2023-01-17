@@ -1281,6 +1281,11 @@ class CalibProcess {
 
     client.close();
   }
+
+  async runTestProgram() {
+    console.log('runWriteVerify');
+    await this.rockhopperClient.runToCompletion('v2_calib_test.ngc');
+  }
 }
 
 module.exports = {
