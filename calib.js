@@ -789,6 +789,10 @@ class CalibProcess {
     console.log('runCharacterizeX');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_x.ngc');
   }
+  async runCharacterizeXZ(){
+    console.log('runCharacterizeXZ');
+    await this.rockhopperClient.runToCompletion('v2_calib_characterize_xz.ngc');
+  }
   async runCharacterizeXFixtureBall(){
     console.log('runCharacterizeXFixtureBall');
     await this.rockhopperClient.runToCompletion('v2_calib_characterize_x_fixture_ball.ngc');
