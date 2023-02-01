@@ -16,6 +16,7 @@ const A_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/a.comp';
 const B_COMP_PATH = POCKETNC_VAR_DIRECTORY + '/b.comp';
 const OVERLAY_PATH = POCKETNC_VAR_DIRECTORY + '/CalibrationOverlay.inc';
 const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
+const STAGES_DIR = CALIB_DIR + "/stages";
 const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
 const CALIB_LOG = CALIB_DIR + '/calib.log';
 const SERVICE_LOG = CALIB_DIR + '/calib-service.log';
@@ -23,6 +24,32 @@ const DEFAULT_10_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/CalibrationOverl
 const DEFAULT_50_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/features/high_speed_spindle/CalibrationOverlay.inc.default';
 const XYZ_FILE_PATH = POCKETNC_VAR_DIRECTORY + '/xyz.txt';
 
+const BASIC_STAGE_LIST = [
+  "ERASE_COMPENSATION", 
+  "SETUP_CMM", 
+  "PROBE_MACHINE_POS", 
+  "PROBE_SPINDLE_POS", 
+  "HOMING_X", 
+  "CHARACTERIZE_X", 
+  "HOMING_Z", 
+  "CHARACTERIZE_Z",
+  "PROBE_FIXTURE_BALL_POS", 
+  "HOMING_Y", 
+  "CHARACTERIZE_Y", 
+  "PROBE_OFFSETS",
+  "HOMING_A", 
+  "HOMING_B", 
+  "CHARACTERIZE_A_LINE", 
+  "CHARACTERIZE_B_LINE",
+  "CALIBRATE",
+  "VERIFY_HOMING_X",
+  "VERIFY_HOMING_Y",
+  "VERIFY_HOMING_A",
+  "VERIFY_HOMING_B",
+  "VERIFY_A_LINE", 
+  "VERIFY_B_LINE",
+];
+const ADVANCED_STAGE_LIST = ["ERASE_COMPENSATION", "SETUP_CMM", "PROBE_MACHINE_POS", "PROBE_SPINDLE_POS", "HOMING_X", "CHARACTERIZE_X", "HOMING_Z", "CHARACTERIZE_Z", "PROBE_FIXTURE_BALL_POS", "HOMING_Y", "CHARACTERIZE_Y", "PROBE_TOP_PLANE", "PROBE_HOME_OFFSETS", "HOMING_A", "HOMING_B", "CHARACTERIZE_A_LINE", "CHARACTERIZE_B_LINE", "TOOL_PROBE_OFFSET", "PRODUCE_CALIBRATION", "APPLY_CALIBRATION", "RESTART_CNC", "VERIFY_X", "VERIFY_Y", "VERIFY_Z", "VERIFY_A", "VERIFY_B"];
 
 async function copyExistingOverlay() {
   try{
@@ -64,16 +91,16 @@ async function resetCalibDir() {
   await deleteSaveFiles();
   await deleteDataFiles();
 }
-async function copyDefaultOverlay(variant) {
-  if(variant === "50"){
+async function copyDefaultOverlay(v2variant) {
+  if(v2variant === "50"){
     await Promise.all([ execPromise(`cp ${DEFAULT_50_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
     return true
   }
-  else if(variant === "10"){
+  else if(v2variant === "10"){
     await Promise.all([ execPromise(`cp ${DEFAULT_10_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
     return true
   }
-  else{console.log('Variant type not specified, failed to copy'); return false}
+  else{console.log('v2variant type not specified, failed to copy'); return false}
 }
 
 /**
@@ -112,8 +139,7 @@ function clearCompensationFiles() {
 
 function checkSaveFileExists(stage) {
   var filename = CALIB_DIR + "/Stages." + stage.toUpperCase();
-  console.log('checkSaveFileExists')
-  console.log(filename)
+  console.log('checkSaveFileExists', filename)
   if (fs.existsSync(filename)) {
     return true;
   }
@@ -202,9 +228,9 @@ const LOADABLE_STAGE_LIST = [STAGES.PROBE_MACHINE_POS, STAGES.PROBE_SPINDLE_POS,
 const LOADABLE_STAGES = new Set(LOADABLE_STAGE_LIST)
 
 //#region CONSTANTS
-//These STATE_ constants are used to set value of CalibProcess.commandedState and CalibProcess.actualState
+//These STATE_ constants are used to set value of CalibProcess.stateRequested and CalibProcess.processState
 const STATE_INIT = "INIT" //If configuration does not begin process immediately on startup. Currently not used
-const STATE_IDLE = "IDLE" //In between stages. Enter this state if commandedState is STATE_STEP upon completion of a stage
+const STATE_IDLE = "IDLE" //In between stages. Enter this state if stateRequested is STATE_STEP upon completion of a stage
 const STATE_PAUSE = "PAUSE" //Mid-stage but paused
 const STATE_RUN = "RUN" //Automatically progression between stages
 const STATE_STEP = "STEP" //Idle after each stage completes
@@ -285,20 +311,22 @@ const VERIFY_ORDER = [
 const V2_10 = "10";
 const V2_50 = "50";
 
+
 //------GLOBALS------
 class CalibProcess {
-  constructor(serialNum, variant) {
+  constructor(serialNum, v2variant, processType) {
     console.log(`serialNum **${serialNum}**`);
-    console.log(`variant **${variant}**`);
+    console.log(`v2variant **${v2variant}**`);
     this.serialNum = serialNum;
-    if(variant !== V2_10 && variant !== V2_50) {
-      throw new Error(`Variant must be "${V2_10}" or "${V2_50}"`);
+    if(v2variant !== V2_10 && v2variant !== V2_50) {
+      throw new Error(`v2variant must be "${V2_10}" or "${V2_50}"`);
     }
-    this.variant = variant;
-
-    this.processType = PROCESS_NEW;
-    // this.processType = PROCESS_RESUME;
-
+    this.v2variant = v2variant;
+    if(!["BASIC", "ADVANCED"].includes(processType)) {
+      throw new Error(`processType must be BASIC or ADVANCED"`);
+    }
+    this.processType = processType;
+    this.stageList = processType === "BASIC" ? BASIC_STAGE_LIST : ADVANCED_STAGE_LIST;
 
     this.status = {
       lastStageStartTime: undefined,
@@ -325,96 +353,134 @@ class CalibProcess {
     this.bHomeErr = null;
 
     this.currentStep, this.currentStage = undefined;
-    this.stages = {
-      calib: CALIB_ORDER.reduce((calibArr, stage) => ({...calibArr, [stage]: {completed: false, error: false, failed: false}}), {}),
-      verify: VERIFY_ORDER.reduce((verifyArr, stage) => ({...verifyArr, [stage]: {completed: false, error: false, failed: false}}), {}),
-    }
-    // this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true
-    //  this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true
-    //  this.stages.calib[STAGES.SETUP_CMM].completed = true
-    //  this.stages.calib[STAGES.PROBE_MACHINE_POS].completed = true
-    //  this.stages.calib[STAGES.SETUP_PART_CSY].completed = true
-    //  this.stages.calib[STAGES.PROBE_SPINDLE_POS].completed = true
-    //  this.stages.calib[STAGES.HOMING_X].completed = true
-    //  this.stages.calib[STAGES.HOMING_Y].completed = true
-    //  this.stages.calib[STAGES.HOMING_Z].completed = true
-    //  this.stages.calib[STAGES.HOMING_A].completed = true
-    //  this.stages.calib[STAGES.HOMING_B].completed = true
-    //  this.stages.calib[STAGES.CHARACTERIZE_X].completed = true
-    //  this.stages.calib[STAGES.CHARACTERIZE_Z].completed = true
-    //  this.stages.calib[STAGES.PROBE_TOP_PLANE].completed = true
-    //  this.stages.calib[STAGES.PROBE_FIXTURE_BALL_POS].completed = true
-    //  this.stages.calib[STAGES.CHARACTERIZE_Y].completed = true
-    //  this.stages.calib[STAGES.SETUP_CNC_CSY].completed = true
-    //  this.stages.calib[STAGES.CHARACTERIZE_A].completed = true
-    //  this.stages.calib[STAGES.CHARACTERIZE_B].completed = true
-    //  this.stages.calib[STAGES.CALC_CALIB].completed = true
-    //  this.stages.calib[STAGES.WRITE_CALIB].completed = true
-
-    //  this.stages.verify[STAGES.RESTART_CNC].completed = true
-    //  this.stages.verify[STAGES.SETUP_CNC_VERIFY].completed = true
-    //  this.stages.verify[STAGES.SETUP_CMM].completed = true
-    //  this.stages.verify[STAGES.SETUP_VERIFY].completed = true
-    //  this.stages.verify[STAGES.TOOL_PROBE_OFFSET].completed = true
-
-    this.managerStages = {};
+    
     this.managerStatus = {};
 
-    this.commandedState = STATE_IDLE
-    this.actualState = STATE_IDLE
+    this.stateRequested = STATE_IDLE
+    this.processState = STATE_IDLE
 
     this.readyForVerify = false;
     this.commandServer = new CommandServer(this);
 
+    this.stageIdx = 0;
+
   }
 
+  async runStages(){
+    var stageIdx;
+    for(stageIdx = 0; stageIdx <= this.stageList.length; stageIdx++){
+      var stage = this.stageList[stageIdx];
+      console.log(`Running stage ${stage}`);
+      var stageDir = STAGES_DIR + "/" + stage;
+
+      //backup any existing calibration data
+      // try{
+      //   await this.backupExistingStageData(stageDir);
+      // }
+      // catch(err){
+      //   console.log('err backupExistingStageData', err.message)
+      // }
+
+      // try{
+      //   await this.saveMachineState(stageDir);
+      // }
+      // catch(err){
+      //   console.log('err saveMachineState', err.message)
+      // }
+
+      var stageMethodName = camelCase("run_" + stage);
+      console.log('stageMethodName', stageMethodName)
+      try{
+        if(this[stageMethodName]){
+          console.log('running custom method', stageMethodName)
+          await this[stageMethodName]();
+        }
+        else{
+          console.log('running std method', stageMethodName)
+          await this.runStdStage(stage);
+        }
+      }
+      catch (err) {
+        console.log(err);
+        console.log('ERROR running stages:', err.message, err.stack);
+        break;
+      }  
+    }
+  }
+
+  async backupExistingStageData(stageDir){
+    console.log(`backupExistingStageData ${stageDir}`)
+    if(fs.existsSync(stageDir)){
+      var numBackups = 0;
+      var backupDir = stageDir + "." + numBackups.toString();
+      while(fs.existsSync(backupDir))
+      {
+        numBackups++;
+        backupDir = stageDir + "." + numBackups.toString();
+      }
+      
+      console.log(`backupExistingStageData ${backupDir}`)
+      await fs.cp(stageDir, backupDir, {recursive: true},(err) => {if (err) {console.error(`Error during backup of existing stage ${err}`)}});
+    }
+  }
+
+  //TODO also save the actual active home offset values from halcmd
+  async saveMachineState(stageDir){
+    try{
+      await fs.copyFile(OVERLAY_PATH, stageDir + "/CalibrationOverlay.inc", (err) => {console.log(err)})
+      await fs.copyFile(A_COMP_PATH, stageDir + "/a.comp", (err) => {console.log(err)})
+      await fs.copyFile(B_COMP_PATH, stageDir + "/b.comp", (err) => {console.log(err)})
+    } catch(error) {
+      console.log(`Error saving machine state ${error}`)
+    }
+  }
 
 
   async cmdRun() {
     console.log('cmdRun')
-    this.commandedState = STATE_RUN;
-    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+    this.stateRequested = STATE_RUN;
+    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       await this.runProcess();
     }
-    else if ([STATE_PAUSE].includes(this.actualState)){
+    else if ([STATE_PAUSE].includes(this.processState)){
       //Continue from mid-stage pause
       //Eventually, PAUSE state could be mid-stage. Currently, PAUSE means "run until current stage finishes", so for now, continuing from pause is the same as continuing from idle
       await this.runProcess();
     }
-    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+    else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Can't run after error, return message
       //TODO return message
     }
-    else if([STATE_STOP].includes(this.actualState)){
+    else if([STATE_STOP].includes(this.processState)){
       //Can't run after stop, return message
       //TODO return message
     }
-    else if([STATE_STEP].includes(this.actualState)){
-      //Currently running a single stage, just change actualState so that
+    else if([STATE_STEP].includes(this.processState)){
+      //Currently running a single stage, just change processState so that
       //process auto-continues upon completion of current stage
-      this.actualState = STATE_RUN;
+      this.processState = STATE_RUN;
     }
     await this.sendUpdate();
   }
   async cmdResume() {
-    this.commandedState = STATE_RUN;
-    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+    this.stateRequested = STATE_RUN;
+    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       await this.runProcess();
     }
-    else if ([STATE_PAUSE].includes(this.actualState)){
+    else if ([STATE_PAUSE].includes(this.processState)){
       //Continue from mid-stage pause
       //Eventually, PAUSE state could be mid-stage. Currently, PAUSE means "run until current stage finishes", so for now, continuing from pause is the same as continuing from idle
       await this.runProcess();
     }
-    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+    else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Already stopped, nothing happening to pause
       //TODO return message
     }
-    else if([STATE_STOP].includes(this.actualState)){
+    else if([STATE_STOP].includes(this.processState)){
       //Already stopped, nothing happening to pause
       //TODO return message
     }
-    else if([STATE_STEP, STATE_RUN].includes(this.actualState)){
+    else if([STATE_STEP, STATE_RUN].includes(this.processState)){
       //Currently running
       //TODO implement more immediate PAUSE
       //For now, we just change commanded state and wait for current stage to complete
@@ -422,44 +488,44 @@ class CalibProcess {
     await this.sendUpdate();
   }
   async cmdStep() {
-    this.commandedState = STATE_STEP;
-    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+    this.stateRequested = STATE_STEP;
+    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       await this.startNextStage();
     }
-    else if ([STATE_PAUSE].includes(this.actualState)){
+    else if ([STATE_PAUSE].includes(this.processState)){
       //Continue from mid-stage pause
       //TODO return message
     }
-    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+    else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Can't run after error, return message
       //TODO return message
     }
-    else if([STATE_STOP].includes(this.actualState)){
+    else if([STATE_STOP].includes(this.processState)){
       //Can't run after stop, return message
       //TODO return message
     }
-    else if([STATE_RUN].includes(this.actualState)){
-      //Currently running stages automatically, just change actualState so that
+    else if([STATE_RUN].includes(this.processState)){
+      //Currently running stages automatically, just change processState so that
       //process idles upon completion of current stage
-      this.actualState = STATE_STEP;
+      this.processState = STATE_STEP;
     }
     await this.sendUpdate();
   }
   async cmdPause() {
-    this.commandedState = STATE_PAUSE;
-    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+    this.stateRequested = STATE_PAUSE;
+    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       //Already idle, this is just a semantic state change
-      this.actualState = STATE_PAUSE;
+      this.processState = STATE_PAUSE;
     }
-    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+    else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Already stopped, nothing happening to pause
       //TODO return message
     }
-    else if([STATE_STOP].includes(this.actualState)){
+    else if([STATE_STOP].includes(this.processState)){
       //Already stopped, nothing happening to pause
       //TODO return message
     }
-    else if([STATE_STEP, STATE_RUN].includes(this.actualState)){
+    else if([STATE_STEP, STATE_RUN].includes(this.processState)){
       //Currently running
       //TODO implement more immediate PAUSE
       //For now, we just change commanded state and wait for current stage to complete
@@ -468,21 +534,21 @@ class CalibProcess {
   }
   async cmdStop() {
     //Terminate the calibration
-    console.log('CmdStop, actualState is ' + this.actualState);
-    this.commandedState = STATE_STOP;
+    console.log('CmdStop, processState is ' + this.processState);
+    this.stateRequested = STATE_STOP;
     await this.sendUpdate();
-    if ([STATE_INIT, STATE_IDLE].includes(this.actualState)){
+    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       //Already idle. Exit process
       process.exit(0);
     }
-    else if([STATE_PAUSE].includes(this.actualState)){
+    else if([STATE_PAUSE].includes(this.processState)){
       process.exit(0);
     }
-    else if([STATE_ERROR, STATE_FAIL].includes(this.actualState)){
+    else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Already idle. Exit process
       process.exit(0);
     }
-    else if([STATE_STEP, STATE_RUN].includes(this.actualState)){
+    else if([STATE_STEP, STATE_RUN].includes(this.processState)){
       //Currently running
       //TODO implement more immediate STOP
       //For now, we just change commanded state and wait for current stage to complete.
@@ -495,7 +561,7 @@ class CalibProcess {
 
   async runProcess() {
     console.log('runProcess')
-    this.actualState = STATE_RUN;
+    this.processState = STATE_RUN;
     while(this.checkAutoProgressStage()){
       console.log('Running process, OK to continue. Starting next stage.')
       await this.startNextStage();
@@ -503,20 +569,20 @@ class CalibProcess {
     }
 
     if(this.status.completed){
-      this.actualState = STATE_COMPLETE
+      this.processState = STATE_COMPLETE
       await this.sendUpdate();
     }
-    else if(this.commandedState === STATE_PAUSE){
+    else if(this.stateRequested === STATE_PAUSE){
       //earlier we received a cmdPause, but must have been mid-stage. Now we have returned from running that stage and can pause
-      this.actualState = STATE_PAUSE;
+      this.processState = STATE_PAUSE;
     }
-    else if(this.commandedState === STATE_STOP){
+    else if(this.stateRequested === STATE_STOP){
       //earlier we received a cmdStop, but must have been mid-stage. Now we have returned from running that stage and can exit
       process.exit(0);
     }
-    else if(this.commandedState === STATE_RUN && this.actualState === STATE_RUN){
+    else if(this.stateRequested === STATE_RUN && this.processState === STATE_RUN){
       //Exiting loop but have not finished, not stopping, and still in STATE_RUN. Something is wrong
-      this.actualState = STATE_ERROR
+      this.processState = STATE_ERROR
       this.status.error = true;
       this.status.errorMsg = "Unable to start next stage";
       await this.sendUpdate();
@@ -525,55 +591,13 @@ class CalibProcess {
 
   async sendUpdate() {
     var update = {};
-    update.commandedState = this.commandedState;
-    update.actualState = this.actualState;
+    update.stateRequested = this.stateRequested;
+    update.processState = this.processState;
     update.stages = this.stages;
     update.status = this.status;
     update.managerStatus = this.managerStatus;
     update.spec = this.spec;
     this.commandServer.send({'calibStatus': update});
-  }
-  async receiveUpdate(msg) {
-    console.log('----Update message----')
-    console.log(msg)
-    this.status.error = msg.status.error;
-    this.status.errorMsg = msg.status.error_msg;
-    this.status.specFailure = msg.status.spec_failure;
-    this.managerStageProgress = msg.stage_progress;
-    this.managerStatus = msg.status;
-    this.spec = msg.spec;
-    if(msg.did_stage_complete){
-      //The linuxcnc-python CalibManager has just finished performing a Stage, update our stage progress
-      this.status.lastStageCompleteTime = process.uptime();
-      if(this.readyForVerify){
-        this.stages.verify[msg.stage].completed = true;
-      }
-      else{
-        this.stages.calib[msg.stage].completed = true;
-      }
-
-      // if(this.commandedState !== STATE_RUN){
-      //   console.log('setting actual state STATE_IDLE in receive update because commanded state is not STATE_RUN, it is ' + this.commandedState)
-      //   this.actualState = STATE_IDLE
-      // }
-    }
-    if(msg.why === MSG_WHY_ERROR){
-      this.actualState = STATE_ERROR;
-      this.stages[this.readyForVerify ? "verify" : "calib"][this.status.currentStage].error = true;
-    }
-    if(msg.why === MSG_WHY_FAIL){
-      this.actualState = STATE_FAIL;
-      this.stages[this.readyForVerify ? "verify" : "calib"][this.status.currentStage].failed = true;
-    }
-    await this.sendUpdate()
-  }
-  checkAutoProgressStage() {
-    console.log("checkAutoProgressStage", this.status.completed, this.status.lastStageCompleteTime, this.status.lastStageStartTime, this.actualState, this.commandedState, this.managerStatus.cmm_error);
-    return !this.status.completed && (this.status.lastStageStartTime === undefined || this.status.lastStageCompleteTime > this.status.lastStageStartTime) && this.actualState === STATE_RUN && this.commandedState === STATE_RUN && !this.managerStatus.cmm_error;
-  }
-  checkContinueCurrentStage() {
-    // return [STATE_RUN, STATE_STEP].includes(this.actualState) && [STATE_RUN, STATE_STEP].includes(this.commandedState);
-    return true;
   }
   async getRockhopperConnection() {
     if(this.rockhopperConnection){
@@ -612,100 +636,18 @@ class CalibProcess {
     this.rockhopperClient.connect('ws://localhost:8000/websocket/');
   }
 
-  loadStageProgress = (stage) => {
-    this.rockhopperClient.send(
-      JSON.stringify(
-        {
-          "0": "o<v2_calib_load_stage_" + stage.toLowerCase() + "> call",
-          "id":"PUT_MDI_CMD",
-          "name":"mdi_cmd",
-          "command":"put",
-        }
-      )
-    )
-  }
-
-  checkStageProgress() {
-    var searchIdx, nextStage;
-    for(searchIdx = 0; searchIdx < CALIB_ORDER.length; searchIdx++){
-      if(!this.stages.calib[CALIB_ORDER[searchIdx]].completed){
-        nextStage = CALIB_ORDER[searchIdx]
-        break;
-      }
-    }
-    if(nextStage === undefined && searchIdx == CALIB_ORDER.length){
-      this.status.calibCompleted = true;
-    }
-
-    if(this.status.calibCompleted){
-      for(searchIdx = 0; searchIdx < VERIFY_ORDER.length; searchIdx++){
-        if(!this.stages.verify[VERIFY_ORDER[searchIdx]].completed){
-          nextStage = VERIFY_ORDER[searchIdx]
-          break;
-        }
-      }
-      if(nextStage === undefined && searchIdx == VERIFY_ORDER.length){
-        this.status.verifyCompleted = true;
-      }
-    }
-
-    this.status.completed = this.status.calibCompleted && this.status.verifyCompleted;
-
-    return nextStage;
-  }
-
-  async startNextStage() {
-    var nextStage = this.checkStageProgress();
-    if( nextStage !== undefined){
-      this.status.lastStageStartTime = process.uptime();
-      await this.runStage(nextStage);
-    }
-  }
-
-  async runStage(stage) {
-    var stageMethodName = camelCase("run_" + stage);
-
-    var stageMethod = this[stageMethodName];
-
-    if(stageMethod === undefined){
-      console.log('Failed to select next stage to run');
-      this.actualState = STATE_ERROR;
-      return;
-    }
-
-    console.log("Running stage method: " + stageMethodName)
-    // await this.rockhopperClient.waitForDoneAndIdle();
-    this.status.currentStage = stage;
-    await this.sendUpdate();
-    try{
-      if(this.processType === PROCESS_RESUME && LOADABLE_STAGES.has(stage) && checkSaveFileExists(stage)){
-        console.log('Loading progress for stage ' + stage);
-        this.loadStageProgress(stage);
-        //dirty hack, wait here for 5 seconds and hope progress has finished loading
-        //the problem is that when PROCESS_RESUME was implemented, progressing to next stage occured when a STAGE_COMPLETE
-        //message was received from cmm-calib
-        //so here in node we could just command the stage to start, and then the process was just listening to messages
-        //now, we have implemented run_to_completion in rockhopper, which is used to run each stage, but we have not
-        //created any programs for loading progress. Currently there are only owords, loadStageProgress calls them via mdi
-        //an easy but verbose solution would be creating program files for each load_stage oword, and run them via run_to_completion
-        await new Promise(r => setTimeout(r, 5000));
-      }
-      else{
-        this.actualState = this.commandedState // commandedState should be either RUN or STEP at this point
-        return await this[stageMethodName]()
-      }
-    }
-    catch (err) {
-      this.actualState = STATE_ERROR;
-      console.log ('error:', err.message, err.stack)
-    }
-  }
-
+  
   //STAGE METHODS
+  async runStdStage(stage){
+    var stageProgramFile = `v2_calib_${stage.toLowerCase()}.ngc`
+    console.log(`Running standard stage ${stage}, file ${stageProgramFile}`);
+    await this.rockhopperClient.runToCompletion(stageProgramFile);
+  }
+  //Most stages consist of a single G-code program, but some require an additional layer of control so have custom methods here
   async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
     console.log('runEraseCompensation');
 
-    await copyDefaultOverlay(this.variant);
+    await copyDefaultOverlay(this.v2variant);
     await resetCalibDir();
 
     clearCompensationFiles();
@@ -725,13 +667,16 @@ class CalibProcess {
       }
     }
     console.log('Reconnected to Rockhopper after service restart');
-
+    
+    await this.rockhopperClient.estopCmdAsync(false);
+    if(!this.rockhopperClient.state.homed){
+      await this.rockhopperClient.homeAxisAsync();
+    }
+    
     //This stage does not run any steps in cmm-calib.
     //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.status.lastStageCompleteTime = process.uptime();
     this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
   }
-
   async runSetupCncCalib(){
     console.log('runSetupCncCalib');
     await this.rockhopperClient.estopCmdAsync(false);
@@ -746,30 +691,13 @@ class CalibProcess {
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
-    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-    //   this.actualState = STATE_IDLE
+    // else if(this.processState === STATE_STEP && this.stateRequested === STATE_STEP){
+    //   this.processState = STATE_IDLE
     // }
-  }
-  async runSetupCmm(){
-    console.log('runSetupCmm');
-    await this.rockhopperClient.runToCompletion('v2_calib_setup_cmm.ngc');
-    return
-  }
-  async runProbeMachinePos(){
-    console.log('runProbeMachinePos');
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_machine_pos.ngc')
-  }
-  async runSetupPartCsy(){
-    console.log('runSetupPartCsy');
-    await this.rockhopperClient.runToCompletion('v2_calib_setup_part_csy.ngc')
   }
   async runProbeSpindlePos(){
     console.log('runProbeSpindlePos');
-    await this.rockhopperClient.runToCompletion(`v2_calib_probe_spindle_pos_v2_${this.variant}.ngc`)
-  }
-  async runProbeFixtureBallPos(){
-    console.log('runProbeFixtureBallPos');
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_fixture_ball_pos.ngc')
+    await this.rockhopperClient.runToCompletion(`v2_calib_probe_spindle_pos_v2_${this.v2variant}.ngc`)
   }
   async runHomingX(){
     console.log('runHomingX');
@@ -784,22 +712,6 @@ class CalibProcess {
       await this.rockhopperClient.runToCompletion('v2_calib_probe_x_home.ngc')
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_x_home.ngc');
-  }
-  async runCharacterizeX(){
-    console.log('runCharacterizeX');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_x.ngc');
-  }
-  async runCharacterizeXZ(){
-    console.log('runCharacterizeXZ');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_xz.ngc');
-  }
-  async runCharacterizeXFixtureBall(){
-    console.log('runCharacterizeXFixtureBall');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_x_fixture_ball.ngc');
-  }
-  async runCharacterizeXReverse(){
-    console.log('runCharacterizeXReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_x_reverse.ngc');
   }
   async runHomingY(){
     console.log('runHomingY');
@@ -818,18 +730,6 @@ class CalibProcess {
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_y_home.ngc');
   }
-  async runCharacterizeY(){
-    console.log('runCharacterizeY');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_y.ngc');
-  }
-  async runCharacterizeYSpindleBall(){
-    console.log('runCharacterizeYSpindleBall');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_y_spindle_ball.ngc');
-  }
-  async runCharacterizeYReverse(){
-    console.log('runCharacterizeYReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_y_reverse.ngc');
-  }
   async runHomingZ(){
     console.log('runHomingZ');
     await this.rockhopperClient.runToCompletion('v2_calib_init_z_home_state.ngc')
@@ -843,26 +743,6 @@ class CalibProcess {
       await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc')
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_z_home.ngc');
-  }
-  async runCharacterizeZ(){
-    console.log('runCharacterizeZ');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_z.ngc');
-  }
-  async runCharacterizeZReverse(){
-    console.log('runCharacterizeZReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_z_reverse.ngc');
-  }
-  async runProbeTopPlane(){
-    console.log('runProbeTopPlane');
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_top_plane.ngc');
-  }
-  async runSetupCncCsy(){
-    console.log('runSetupCncCsy');
-    await this.rockhopperClient.runToCompletion('v2_calib_setup_cnc_csy.ngc');
-  }
-  async runProbeHomeOffsets(){
-    console.log('runProbeHomeOffsets');
-    await this.rockhopperClient.runToCompletion('v2_calib_probe_home_offsets.ngc');
   }
   async runHomingA(){
     console.log('runHomingA');
@@ -985,46 +865,30 @@ class CalibProcess {
     await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
     await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
   }
-  async runCharacterizeASphere(){
-    console.log('runCharacterizeASphere');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_sphere.ngc');
-  }
-  async runCharacterizeASphereReverse(){
-    console.log('runCharacterizeASphereReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_sphere_reverse.ngc');
-  }
-  async runCharacterizeBSphere(){
-    console.log('runCharacterizeBSphere');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_sphere.ngc');
-  }
-  async runCharacterizeBSphereReverse(){
-    console.log('runCharacterizeBSphereReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_sphere_reverse.ngc');
-  }
-  async runCharacterizeALine(){
-    console.log('runCharacterizeALine');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_line.ngc');
-  }
-  async runCharacterizeALineReverse(){
-    console.log('runCharacterizeALineReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_a_line_reverse.ngc');
-  }
-  async runCharacterizeBLine(){
-    console.log('runCharacterizeBLine');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_line.ngc');
-  }
-  async runCharacterizeBLineReverse(){
-    console.log('runCharacterizeBLineReverse');
-    await this.rockhopperClient.runToCompletion('v2_calib_characterize_b_line_reverse.ngc');
-  }
-  async runCalcCalib(){
-    console.log('runCalcCalib');
-    await this.rockhopperClient.runToCompletion('v2_calib_calc_calib.ngc');
-  }
-  async runWriteCalib(){
-    console.log('runWriteCalib');
-    await this.rockhopperClient.runToCompletion('v2_calib_write_calib.ngc');
-    this.readyForVerify = true;
+  async runCalibrate(){
+    console.log('runCalibrate');
+    await this.rockhopperClient.runToCompletion('v2_calib_calibrate.ngc');
+
+    await this.rockhopperClient.restartServices()
+
+    //This delay is intended to ensure that the current rockhopper process has halted before we begin polling for connection
+    await new Promise(r => setTimeout(r, 3000));
+
+    this.rockhopperClient.connected = false;
+    var waitCount = 0;
+    while(!this.rockhopperClient.connected){
+      await new Promise(r => setTimeout(r, 1000));
+      waitCount++;
+      if(waitCount % 5 === 0){
+        console.log('Waiting for rockhopper restart')
+      }
+    }
+    console.log('Reconnected to Rockhopper after service restart');
+
+    await this.rockhopperClient.estopCmdAsync(false);
+    if(!this.rockhopperClient.state.homed){
+      await this.rockhopperClient.homeAxisAsync();
+    }
   }
   async runRestartCnc(){
     console.log('runRestartCnc');
@@ -1045,16 +909,10 @@ class CalibProcess {
     }
     console.log('Reconnected to Rockhopper after service restart');
 
-    //This stage does not run any steps in cmm-calib.
-    //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.stages.verify[STAGES.RESTART_CNC].completed = true;
-    this.status.lastStageCompleteTime = process.uptime();
-    // if(this.checkAutoProgressStage()){
-    //   this.startNextStage();
-    // }
-    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-    //   this.actualState = STATE_IDLE
-    // }
+    await this.rockhopperClient.estopCmdAsync(false);
+    if(!this.rockhopperClient.state.homed){
+      await this.rockhopperClient.homeAxisAsync();
+    }
   }
   async runSetupCncVerify(){
     console.log('runSetupCncVerify');
@@ -1070,38 +928,49 @@ class CalibProcess {
     // if(this.checkAutoProgressStage()){
     //   this.startNextStage();
     // }
-    // else if(this.actualState === STATE_STEP && this.commandedState === STATE_STEP){
-    //   this.actualState = STATE_IDLE
+    // else if(this.processState === STATE_STEP && this.stateRequested === STATE_STEP){
+    //   this.processState = STATE_IDLE
     // }
   }
-  async runSetupVerify(){
-    console.log('runSetupVerify');
-    await this.rockhopperClient.runToCompletion('v2_calib_setup_verify.ngc');
+  async runVerifyHomingX(){
+    console.log('runVerifyHomingX');
+    await this.rockhopperClient.runToCompletion('v2_calib_init_verify_x_home_state.ngc')
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
+      console.log('runVerifyHomingX ' + idx);
+      const x = (Math.random()*4.5-2)*25.4;
+      console.log(`G53 G0 X${x}`);
+      await this.rockhopperClient.mdiCmdAsync(`G53 G0 X${x}`);
+      await this.rockhopperClient.unhomeAxisAsync([0]);
+      await this.rockhopperClient.homeAxisAsync([0]);
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_x_home_verify.ngc')
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_x_home_final.ngc');
   }
-  async runToolProbeOffset() {
-    console.log('runToolProbeOffset');
-    /*
-    perform a tool probe
-    move for clearance
-    at position where tool probe touch occurred, probe spindle tip with CMM
-    probe the fixture plane at Y0 A90
-    calculate PROBE_SENSOR_123_OFFSET
-    use difference in Z-position between this spindle position and the plane at Y0A90 to calculate PROBE_SENSOR_123_OFFSET
-    PROBE_SENSOR_123_OFFSET = TOOL_PROBE_Z - (FIXTURE_PLANE_Z - 1" + 3") (minus 1" for fixture thickness, plus 3" for long side of 123 block)
-    */
+  async runVerifyHomingY(){
+    console.log('runVerifyHomingY');
+    await this.rockhopperClient.runToCompletion('v2_calib_init_verify_y_home_state.ngc')
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
+      console.log('runVerifyHomingY ' + idx);
 
-    // perform a tool probe
-    // clearXYZFile()
+      const y = (Math.random()*4-2)*25.4;
+      console.log(`G53 G0 Y${y}`);
 
-    await this.rockhopperClient.runToCompletion('v2_calib_tool_probe_offset.ngc');
+      await this.rockhopperClient.mdiCmdAsync(`G53 G0 Y${y}`);
+      await this.rockhopperClient.unhomeAxisAsync([1]);
+      await this.rockhopperClient.homeAxisAsync([1]);
+
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home_verify.ngc');
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_y_home_final.ngc');
   }
-  async runVerifyAHoming(){
+  async runVerifyHomingA(){
     console.log('runVerifyAHoming');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`)
+    await this.rockhopperClient.runToCompletion('v2_calib_init_verify_a_home_state.ngc')
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      const goto = A_HOMING_POSITIONS[idx%A_HOMING_POSITIONS.length]
-      await this.rockhopperClient.mdiCmdAsync(`G0 A${goto}`);
+      console.log('runVerifyHomingA ' + idx);
+      const a = (Math.random()*25-5);
+      await this.rockhopperClient.mdiCmdAsync(`G0 A${a}`);
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -1118,7 +987,36 @@ class CalibProcess {
         return;
       }
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
+    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home_final.ngc');
+  }
+  async runVerifyHomingB(){
+    console.log('runVerifyBHoming');
+    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
+    await this.rockhopperClient.runToCompletion('v2_calib_init_verify_b_home_state.ngc')
+
+    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
+      console.log('runHomingB ' + idx);
+      const b = (Math.random()*40-20);
+      await this.rockhopperClient.mdiCmdAsync(`G0 B${b}`);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.unhomeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.homeAxisAsync([4]);
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc');
+      await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
+      if( !this.checkContinueCurrentStage() ){
+        return;
+      }
+    }
+    await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home_final.ngc');
   }
   async runVerifyA(){
     console.log('runVerifyA');
@@ -1166,7 +1064,7 @@ class CalibProcess {
       if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
         console.log("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
         threshold = threshold * 10; //TODO change this so process stops. Delete this threshold expansion and uncomment next 3 lines
-        // this.actualState = STATE_FAIL
+        // this.processState = STATE_FAIL
         // this.stages.verify[STAGES.VERIFY_A].failed = true
         // return;
       }
@@ -1176,33 +1074,7 @@ class CalibProcess {
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a.ngc');
   }
-  async runVerifyBHoming(){
-    console.log('runVerifyBHoming');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}`);
-
-    for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
-      const goto = B_HOMING_POSITIONS[idx%B_HOMING_POSITIONS.length]
-      await this.rockhopperClient.mdiCmdAsync(`G0 B${goto}`);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.unhomeAxisAsync([4]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.homeAxisAsync([4]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc');
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-    }
-
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
-    
-  }
+  
   async runVerifyB(){
     console.log('runVerifyB');
 
@@ -1247,7 +1119,7 @@ class CalibProcess {
       if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
         console.log("Halting B-axis homing verification, unable to achieve home position with error <0.01");
         threshold = threshold * 10; //TODO delete this and uncomment next 3 lines
-        // this.actualState = STATE_FAIL
+        // this.processState = STATE_FAIL
         // this.stages.verify[STAGES.VERIFY_B].failed = true
         // return;
       }
@@ -1256,14 +1128,6 @@ class CalibProcess {
       await this.rockhopperClient.homeAxisAsync([4]);
     }
     await this.rockhopperClient.runToCompletion('v2_calib_verify_b.ngc');
-  }
-  async runCalcVerify(){
-    console.log('runCalcVerify');
-    await this.rockhopperClient.runToCompletion('v2_calib_calc_verify.ngc');
-  }
-  async runWriteVerify(){
-    console.log('runWriteVerify');
-    await this.rockhopperClient.runToCompletion('v2_calib_write_verify.ngc');
   }
   async runUploadFiles(){
     console.log('runUploadFiles');

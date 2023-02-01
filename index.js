@@ -6,20 +6,12 @@ const fs = require('fs');
 const { CalibProcess } = require('./calib');
 const { CalibManagerWorker } = require('./calib-manager-worker');
 
-var serialNum = null;
-var variant = null;
-process.argv.forEach(function (val, index, array) {
-  console.log(index + ': ' + val);
-  switch(index){
-    case 2:
-      serialNum = val;
-    case 3:
-      variant = val;
-  }
-});
 
+var serialNum = process.argv[2];
+var v2variant = process.argv[3];
+var processType = "BASIC"; //process.argv[4];
 
-var calibProcess = new CalibProcess(serialNum, variant);
+var calibProcess = new CalibProcess(serialNum, v2variant, processType);
 var calibManagerWorker = new CalibManagerWorker(calibProcess);
 calibManagerWorker.connect();
 
@@ -35,7 +27,7 @@ async function pingCmmLoop() {
       // console.log(cmmPing)
       lastCmmPing = Date.now();
       calibProcess.status.cmmConnected = true;
-    } 
+    }
     catch(e) {
       calibProcess.status.cmmConnected = false;
     }
@@ -45,17 +37,17 @@ async function pingCmmLoop() {
 async function startup() {
   while(true){
     await new Promise(r => setTimeout(r, 1000));
-    console.log(calibProcess.commandServer.isConnected())
-    console.log(calibProcess.rockhopperClient.connected)
     if(calibProcess.commandServer.isConnected() && calibProcess.rockhopperClient.connected){
       break;
     }
   }
-  await calibProcess.cmdRun()
+  // console.log(calibProcess.stageList);
+  await calibProcess.runStages();
 }
 
 async function main() {
-  console.log(`Starting CMM calibration process, serial ${serialNum}, spindle RPM ${variant}k`);
+  console.log(process.versions);
+  console.log(`Starting CMM calibration. ${processType} process, serial ${serialNum}, spindle RPM ${v2variant}k`);
   await Promise.all([ pingCmmLoop(), startup() ]);
 }
 
