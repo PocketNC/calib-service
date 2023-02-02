@@ -20,6 +20,8 @@ const STAGES_DIR = CALIB_DIR + "/stages";
 const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
 const CALIB_LOG = CALIB_DIR + '/calib.log';
 const SERVICE_LOG = CALIB_DIR + '/calib-service.log';
+const DEFAULT_A_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/a.comp.default';
+const DEFAULT_B_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/b.comp.default';
 const DEFAULT_10_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/CalibrationOverlay.inc.default';
 const DEFAULT_50_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/features/high_speed_spindle/CalibrationOverlay.inc.default';
 const XYZ_FILE_PATH = POCKETNC_VAR_DIRECTORY + '/xyz.txt';
@@ -101,6 +103,10 @@ async function copyDefaultOverlay(v2variant) {
     return true
   }
   else{console.log('v2variant type not specified, failed to copy'); return false}
+}
+async function copyDefaultCompensation() {
+  await Promise.all([ execPromise(`cp ${DEFAULT_A_COMP_PATH} ${A_COMP_PATH}`)]);
+  await Promise.all([ execPromise(`cp ${DEFAULT_B_COMP_PATH} ${B_COMP_PATH}`)]);
 }
 
 /**
@@ -648,9 +654,9 @@ class CalibProcess {
     console.log('runEraseCompensation');
 
     await copyDefaultOverlay(this.v2variant);
+    await copyDefaultCompensation();
     await resetCalibDir();
 
-    clearCompensationFiles();
     console.log('Compensation files cleared, restarting services.');
     await this.rockhopperClient.restartServices();
 
@@ -673,27 +679,6 @@ class CalibProcess {
       await this.rockhopperClient.homeAxisAsync();
     }
     
-    //This stage does not run any steps in cmm-calib.
-    //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.stages.calib[STAGES.ERASE_COMPENSATION].completed = true;
-  }
-  async runSetupCncCalib(){
-    console.log('runSetupCncCalib');
-    await this.rockhopperClient.estopCmdAsync(false);
-    if(!this.rockhopperClient.state.homed){
-      await this.rockhopperClient.homeAxisAsync();
-    }
-
-    //This stage does not run any steps in cmm-calib.
-    //Set stage completed and start next stage here, instead of waiting for message from cmm-calib
-    this.status.lastStageCompleteTime = process.uptime();
-      this.stages.calib[STAGES.SETUP_CNC_CALIB].completed = true;
-    // if(this.checkAutoProgressStage()){
-    //   this.startNextStage();
-    // }
-    // else if(this.processState === STATE_STEP && this.stateRequested === STATE_STEP){
-    //   this.processState = STATE_IDLE
-    // }
   }
   async runProbeSpindlePos(){
     console.log('runProbeSpindlePos');
