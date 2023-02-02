@@ -806,7 +806,8 @@ class CalibProcess {
         await new Promise(r => setTimeout(r, 1000));
       }
     }
-
+    
+    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       console.log('runHomingB ' + idx);
       const b = (Math.random()*40-20);
@@ -979,6 +980,7 @@ class CalibProcess {
     console.log('runVerifyBHoming');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
     await this.rockhopperClient.runToCompletion('v2_calib_init_verify_b_home_state.ngc')
+    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
 
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       console.log('runHomingB ' + idx);
@@ -996,7 +998,7 @@ class CalibProcess {
         return;
       }
       await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc');
-      await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
+      await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
       if( !this.checkContinueCurrentStage() ){
         return;
       }
@@ -1005,30 +1007,6 @@ class CalibProcess {
   }
   async runVerifyA(){
     console.log('runVerifyA');
-
-    while(true){
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.3.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd));
-
-      var aHomeOffset = curr + this.managerStatus.a_home.avg
-
-      await Promise.all([ execPromise(`halcmd -s setp ini.3.home_offset ${aHomeOffset}` )]);
-      
-      break;
-      // var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
-      // var idxStart = out[0].stdout.search("IN") + 2;
-      // var idxEnd = out[0].stdout.search("ini.4.home_offset");
-      // var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
-      // if(curr === 0.0){
-      //   break;
-      // }
-      // else{
-      //   console.log("Failed to zero A home offset");
-      //   await new Promise(r => setTimeout(r, 1000));
-      // }
-    }
 
     await this.rockhopperClient.mdiCmdAsync(`G0 A0Y${Y_POS_PROBING}`);
     var homingAttemptsCount = 0;
@@ -1062,30 +1040,6 @@ class CalibProcess {
   
   async runVerifyB(){
     console.log('runVerifyB');
-
-    while(true){
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.4.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd));
-
-      var bHomeOffset = curr + this.managerStatus.b_home.avg
-
-      await Promise.all([ execPromise(`halcmd -s setp ini.4.home_offset ${bHomeOffset}` )]);
-      
-      break;
-      // var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
-      // var idxStart = out[0].stdout.search("IN") + 2;
-      // var idxEnd = out[0].stdout.search("ini.4.home_offset");
-      // var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
-      // if(curr === 0.0){
-      //   break;
-      // }
-      // else{
-      //   console.log("Failed to zero A home offset");
-      //   await new Promise(r => setTimeout(r, 1000));
-      // }
-    }
 
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
