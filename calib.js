@@ -401,7 +401,7 @@ class CalibProcess {
         }
         else{
           console.log('running std method', stageMethodName)
-          await this.runStdStage(stage);
+          await this.performActionIfOk(() => this.runStdStage(stage));
         }
       }
       catch (err) {
