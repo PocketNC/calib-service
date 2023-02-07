@@ -135,6 +135,27 @@ class RockhopperClient {
     });
   }
 
+  watch = (name, id, callback) => {
+    const msgData = {
+      id,
+      name,
+      command: "watch",
+    };
+    this.registerCallback(msgData.id, callback);
+    this.send(JSON.stringify(msgData));
+  }
+
+  unwatch = (name, id) => {
+    const msgData = {
+      id,
+      name,
+      command: "unwatch",
+    };
+    this.unregisterCallback(msgData.id);
+    this.send(JSON.stringify(msgData));
+  }
+
+
   programOpenCmd = (filename, type="CALIBRATION") => {
     console.log("programOpenCm", filename, type)
     return this.genCommandPromise({

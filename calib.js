@@ -44,12 +44,12 @@ const BASIC_STAGE_LIST = [
   "CHARACTERIZE_A_LINE", 
   "CHARACTERIZE_B_LINE",
   "CALIBRATE",
-  "VERIFY_HOMING_X",
-  "VERIFY_HOMING_Y",
-  "VERIFY_HOMING_A",
-  "VERIFY_HOMING_B",
-  "VERIFY_A_LINE", 
-  "VERIFY_B_LINE",
+//  "VERIFY_HOMING_X",
+//  "VERIFY_HOMING_Y",
+//  "VERIFY_HOMING_A",
+//  "VERIFY_HOMING_B",
+//  "VERIFY_A_LINE", 
+//  "VERIFY_B_LINE",
 ];
 const ADVANCED_STAGE_LIST = ["ERASE_COMPENSATION", "SETUP_CMM", "PROBE_MACHINE_POS", "PROBE_SPINDLE_POS", "HOMING_X", "CHARACTERIZE_X", "HOMING_Z", "CHARACTERIZE_Z", "PROBE_FIXTURE_BALL_POS", "HOMING_Y", "CHARACTERIZE_Y", "PROBE_TOP_PLANE", "PROBE_HOME_OFFSETS", "HOMING_A", "HOMING_B", "CHARACTERIZE_A_LINE", "CHARACTERIZE_B_LINE", "TOOL_PROBE_OFFSET", "PRODUCE_CALIBRATION", "APPLY_CALIBRATION", "RESTART_CNC", "VERIFY_X", "VERIFY_Y", "VERIFY_Z", "VERIFY_A", "VERIFY_B"];
 
@@ -354,6 +354,12 @@ class CalibProcess {
 
     this.rockhopperClient = new RockhopperClient();
     this.rockhopperClient.connect();
+    const watchErrorStatusItem = (msg) => {
+      if(msg.id === "LOGIN_ID" && msg.code === "?OK") {
+        this.rockhopperClient.watch("error", "WATCH_ERROR_ID", this.errorCallback);
+      }
+    }
+    this.rockhopperClient.registerCallback("LOGIN_ID", watchErrorStatusItem);
 
     this.aHomeErr = null;
     this.bHomeErr = null;
@@ -605,41 +611,10 @@ class CalibProcess {
     update.spec = this.spec;
     this.commandServer.send({'calibStatus': update});
   }
-  async getRockhopperConnection() {
-    if(this.rockhopperConnection){
-      return this.rockhopperConnection;
-    }
-    await this.connectRockhopper();
-    return this.rockhopperConnection;
-  }
-  async connectRockhopper() {
-    this.rockhopperConnected = false;
-    if(this.rockhopperClient === undefined){
-      this.rockhopperClient = new WebSocketClient();
-    }
-    this.rockhopperClient.on('connectFailed', function(error) {
-      this.rockhopperConnected = false;
-      this.rockhopperConnection = undefined;
-      console.log('Rockhopper Connect Error: ' + error.toString());
-    });
-    this.rockhopperClient.on('connect', function(connection) {
-      this.rockhopperConnected = true;
-      this.rockhopperConnection = connection;
-      console.log('Rockhopper Connection established!');
-      connection.on('error', function(error) {
-        this.rockhopperConnected = false;
-        console.log("Rockhopper Connection error: " + error.toString());
-      });
-      connection.on('close', function() {
-        this.rockhopperConnected = false;
-        this.rockhopperConnection = undefined;
-        console.log('Rockhopper Connection closed!');
-      });
-      connection.on('message', function(message) {
-        rockhopperMessage = JSON.parse(message.utf8Data);
-      });
-    })
-    this.rockhopperClient.connect('ws://localhost:8000/websocket/');
+
+  errorCallback = (msg) => {
+    console.log("in error callback", msg);
+    // TODO - update an error parameter that will halt routines
   }
 
   
@@ -788,6 +763,12 @@ class CalibProcess {
     await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
     await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
   }
+
+  checkContinueCurrentStage() {
+    // TODO - check whether we're in an error state
+    return true;
+  }
+
   async runHomingB(){
     console.log('runHomingB');
     await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
