@@ -376,32 +376,24 @@ class CalibProcess {
 
     this.stageIdx = 0;
 
+    this.error = null;
+    this.errorMsg = null;
   }
 
   async runStages(){
     var stageIdx;
     for(stageIdx = 0; stageIdx <= this.stageList.length; stageIdx++){
+      if( !this.checkStartNextStage()){
+        console.log("Error detected, ending runStages")
+        break
+      }
       var stage = this.stageList[stageIdx];
       console.log(`Running stage ${stage}`);
-      var stageDir = STAGES_DIR + "/" + stage;
-
-      //backup any existing calibration data
-      // try{
-      //   await this.backupExistingStageData(stageDir);
-      // }
-      // catch(err){
-      //   console.log('err backupExistingStageData', err.message)
-      // }
-
-      // try{
-      //   await this.saveMachineState(stageDir);
-      // }
-      // catch(err){
-      //   console.log('err saveMachineState', err.message)
-      // }
+      this.currentStage = stage;
 
       var stageMethodName = camelCase("run_" + stage);
       console.log('stageMethodName', stageMethodName)
+      await this.sendUpdate();
       try{
         if(this[stageMethodName]){
           console.log('running custom method', stageMethodName)
@@ -445,6 +437,13 @@ class CalibProcess {
     } catch(error) {
       console.log(`Error saving machine state ${error}`)
     }
+  }
+
+  async performActionIfOk(action){
+    if( this.error ){
+      throw Error(`Error detected ${this.errorMsg}, bailing on action ${action} in stage ${this.currentStage}`)
+    }
+    await action()
   }
 
 
@@ -612,9 +611,14 @@ class CalibProcess {
     this.commandServer.send({'calibStatus': update});
   }
 
-  errorCallback = (msg) => {
+  async errorCallback(msg) {
     console.log("in error callback", msg);
-    // TODO - update an error parameter that will halt routines
+    if(msg.data.type && msg.data.type === 'error'){
+      this.error = true;
+      this.errorMsg = msg.data.text;
+      //Send an extra abort to Rockhopper, timing issues mean we could have started the next thing before this message arrived
+      await this.rockhopperClient.abortCmd();
+    }
   }
 
   
@@ -649,65 +653,67 @@ class CalibProcess {
     }
     console.log('Reconnected to Rockhopper after service restart');
     
-    await this.rockhopperClient.estopCmdAsync(false);
+    await this.performActionIfOk(() => this.rockhopperClient.estopCmdAsync(false));
     if(!this.rockhopperClient.state.homed){
-      await this.rockhopperClient.homeAxisAsync();
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync());
     }
     
   }
   async runProbeSpindlePos(){
     console.log('runProbeSpindlePos');
-    await this.rockhopperClient.runToCompletion(`v2_calib_probe_spindle_pos_v2_${this.v2variant}.ngc`)
+    await this.performActionIfOk(() => 
+      this.rockhopperClient.runToCompletion(`v2_calib_probe_spindle_pos_v2_${this.v2variant}.ngc`)
+    );
   }
   async runHomingX(){
     console.log('runHomingX');
-    await this.rockhopperClient.runToCompletion('v2_calib_init_x_home_state.ngc')
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_x_home_state.ngc'))
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingX ' + idx);
       const x = (Math.random()*4.5-2)*25.4;
       console.log(`G53 G0 X${x}`);
-      await this.rockhopperClient.mdiCmdAsync(`G53 G0 X${x}`);
-      await this.rockhopperClient.unhomeAxisAsync([0]);
-      await this.rockhopperClient.homeAxisAsync([0]);
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_x_home.ngc')
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G53 G0 X${x}`));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([0]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([0]));
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_x_home.ngc'))
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_x_home.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_x_home.ngc'));
   }
   async runHomingY(){
     console.log('runHomingY');
-    await this.rockhopperClient.runToCompletion('v2_calib_init_y_home_state.ngc')
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_y_home_state.ngc'));
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingY ' + idx);
 
       const y = (Math.random()*4-2)*25.4;
       console.log(`G53 G0 Y${y}`);
 
-      await this.rockhopperClient.mdiCmdAsync(`G53 G0 Y${y}`);
-      await this.rockhopperClient.unhomeAxisAsync([1]);
-      await this.rockhopperClient.homeAxisAsync([1]);
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G53 G0 Y${y}`));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([1]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([1]));
 
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc');
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_y_home.ngc'));
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_y_home.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_y_home.ngc'));
   }
   async runHomingZ(){
     console.log('runHomingZ');
-    await this.rockhopperClient.runToCompletion('v2_calib_init_z_home_state.ngc')
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_z_home_state.ngc'));
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_LINEAR; idx++){
       console.log('runHomingZ ' + idx);
       const z = (-Math.random()*2.5-.5)*25.4;
       console.log(`G53 G0 Z${z}`);
-      await this.rockhopperClient.mdiCmdAsync(`G53 G0 Z${z}`);
-      await this.rockhopperClient.unhomeAxisAsync([2]);
-      await this.rockhopperClient.homeAxisAsync([2]);
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc')
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G53 G0 Z${z}`));
+      await this.performActionIfOk(() =>  this.rockhopperClient.unhomeAxisAsync([2]));
+      await this.performActionIfOk(() =>  this.rockhopperClient.homeAxisAsync([2]));
+      await this.performActionIfOk(() =>  this.rockhopperClient.runToCompletion('v2_calib_probe_z_home.ngc'));
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_z_home.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_z_home.ngc'));
   }
   async runHomingA(){
     console.log('runHomingA');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
-    await this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc')
+    await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc'));
     while(true){
       await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
       var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
@@ -726,22 +732,10 @@ class CalibProcess {
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       console.log('runHomingA ' + idx);
       const a = (Math.random()*25-5);
-      await this.rockhopperClient.mdiCmdAsync(`G0 A${a}`);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.unhomeAxisAsync([3]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.homeAxisAsync([3]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc')
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 A${a}`));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([3]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([3]));
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home.ngc'));
     }
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
     while(true){
@@ -758,21 +752,31 @@ class CalibProcess {
         await new Promise(r => setTimeout(r, 1000));
       }
     }
-    await this.rockhopperClient.unhomeAxisAsync([3]);
-    await this.rockhopperClient.homeAxisAsync([3]);
-    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([3]));
+    await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([3]));
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc'));
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc'));
   }
 
   checkContinueCurrentStage() {
-    // TODO - check whether we're in an error state
+    if(this.error){
+      return false;
+    }
     return true;
   }
 
+  checkStartNextStage() {
+    if(this.error){
+      return false;
+    }
+    return true;
+  }
+
+
   async runHomingB(){
     console.log('runHomingB');
-    await this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`);
-    await this.rockhopperClient.runToCompletion('v2_calib_init_b_home_state.ngc')
+    await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_b_home_state.ngc'))
     while(true){
       await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
       var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
@@ -788,27 +792,15 @@ class CalibProcess {
       }
     }
     
-    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc'));
     for(let idx = 0; idx < NUM_SAMPLES_HOME_REPEAT_ROTARY; idx++){
       console.log('runHomingB ' + idx);
       const b = (Math.random()*40-20);
-      await this.rockhopperClient.mdiCmdAsync(`G0 B${b}`);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.unhomeAxisAsync([4]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.homeAxisAsync([4]);
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc');
-      await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc');
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 B${b}`));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([4]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([4]));
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home.ngc'));
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_z.ngc'));
     }
 
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
@@ -826,17 +818,17 @@ class CalibProcess {
         await new Promise(r => setTimeout(r, 1000));
       }
     }
-    await this.rockhopperClient.unhomeAxisAsync([4]);
-    await this.rockhopperClient.homeAxisAsync([4]);
+    await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([4]));
+    await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([4]));
 
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc');
-    await this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_b_home.ngc'));
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_go_to_clearance_y.ngc'));
   }
   async runCalibrate(){
     console.log('runCalibrate');
-    await this.rockhopperClient.runToCompletion('v2_calib_calibrate.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_calibrate.ngc'));
 
-    await this.rockhopperClient.restartServices()
+    await this.performActionIfOk(() => this.rockhopperClient.restartServices());
 
     //This delay is intended to ensure that the current rockhopper process has halted before we begin polling for connection
     await new Promise(r => setTimeout(r, 3000));
@@ -852,9 +844,9 @@ class CalibProcess {
     }
     console.log('Reconnected to Rockhopper after service restart');
 
-    await this.rockhopperClient.estopCmdAsync(false);
+    await this.performActionIfOk(() => this.rockhopperClient.estopCmdAsync(false));
     if(!this.rockhopperClient.state.homed){
-      await this.rockhopperClient.homeAxisAsync();
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync());
     }
   }
   async runRestartCnc(){
@@ -989,16 +981,12 @@ class CalibProcess {
   async runVerifyA(){
     console.log('runVerifyA');
 
-    await this.rockhopperClient.mdiCmdAsync(`G0 A0Y${Y_POS_PROBING}`);
+    await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 A0Y${Y_POS_PROBING}`));
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
     while(true){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc')
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc'));
 
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
-      // if(Math.abs(this.managerStatus.a_home_err) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD){
       if(Math.abs(this.managerStatus.a_home_err) < threshold){ //TODO remove and uncomment above line
         console.log("VERIFY_A home position within range, error " + this.managerStatus.a_home_err);
         break;
@@ -1012,11 +1000,11 @@ class CalibProcess {
         // this.stages.verify[STAGES.VERIFY_A].failed = true
         // return;
       }
-      await this.rockhopperClient.mdiCmdAsync("G0 A-5");
-      await this.rockhopperClient.unhomeAxisAsync([3]);
-      await this.rockhopperClient.homeAxisAsync([3]);
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 A-5"));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([3]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([3]));
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_a.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_a.ngc'));
   }
   
   async runVerifyB(){
@@ -1025,10 +1013,8 @@ class CalibProcess {
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
     while(true){
-      await this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc')
-      if( !this.checkContinueCurrentStage() ){
-        return;
-      }
+      await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc'));
+      
       // if(Math.abs(this.managerStatus.b_home_err) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD){
       if(Math.abs(this.managerStatus.b_home_err) < threshold){ //TODO remove and uncomment above line
         console.log("VERIFY_B home position within range, error " + this.managerStatus.b_home_err);
@@ -1043,11 +1029,11 @@ class CalibProcess {
         // this.stages.verify[STAGES.VERIFY_B].failed = true
         // return;
       }
-      await this.rockhopperClient.mdiCmdAsync("G0 B-5");
-      await this.rockhopperClient.unhomeAxisAsync([4]);
-      await this.rockhopperClient.homeAxisAsync([4]);
+      await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 B-5"));
+      await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([4]));
+      await this.performActionIfOk(() => this.rockhopperClient.homeAxisAsync([4]));
     }
-    await this.rockhopperClient.runToCompletion('v2_calib_verify_b.ngc');
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_b.ngc'));
   }
   async runUploadFiles(){
     console.log('runUploadFiles');
