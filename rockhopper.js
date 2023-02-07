@@ -167,6 +167,14 @@ class RockhopperClient {
     });
   }
 
+  abortCmd = () => {
+    return this.genCommandPromise({
+      "id":"PUT_ABORT_CMD",
+      "name":"abort_cmd",
+      "command":"put",
+    });
+  }
+
   cycleStart = () => {
     return this.genCommandPromise( {
       "id":"PUT_CYCLE_START_CMD",
