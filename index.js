@@ -42,7 +42,7 @@ async function startup() {
     }
   }
   // console.log(calibProcess.stageList);
-  await calibProcess.runStages();
+  await calibProcess.runStages(startIdx=0);
 }
 
 async function main() {

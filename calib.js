@@ -44,12 +44,9 @@ const BASIC_STAGE_LIST = [
   "CHARACTERIZE_A_LINE", 
   "CHARACTERIZE_B_LINE",
   "CALIBRATE",
-//  "VERIFY_HOMING_X",
-//  "VERIFY_HOMING_Y",
-//  "VERIFY_HOMING_A",
-//  "VERIFY_HOMING_B",
-//  "VERIFY_A_LINE", 
-//  "VERIFY_B_LINE",
+  "VERIFY_OFFSETS",
+  "VERIFY_A_LINE", 
+  "VERIFY_B_LINE"
 ];
 const ADVANCED_STAGE_LIST = ["ERASE_COMPENSATION", "SETUP_CMM", "PROBE_MACHINE_POS", "PROBE_SPINDLE_POS", "HOMING_X", "CHARACTERIZE_X", "HOMING_Z", "CHARACTERIZE_Z", "PROBE_FIXTURE_BALL_POS", "HOMING_Y", "CHARACTERIZE_Y", "PROBE_TOP_PLANE", "PROBE_HOME_OFFSETS", "HOMING_A", "HOMING_B", "CHARACTERIZE_A_LINE", "CHARACTERIZE_B_LINE", "TOOL_PROBE_OFFSET", "PRODUCE_CALIBRATION", "APPLY_CALIBRATION", "RESTART_CNC", "VERIFY_X", "VERIFY_Y", "VERIFY_Z", "VERIFY_A", "VERIFY_B"];
 
@@ -375,21 +372,27 @@ class CalibProcess {
     this.commandServer = new CommandServer(this);
 
     this.stageIdx = 0;
+    this.lastStageCompleteIdx = -1;
 
     this.error = null;
     this.errorMsg = null;
   }
 
-  async runStages(){
+  async runStages(startIdx){
+    this.stateRequested = STATE_RUN;
+    this.processState = STATE_RUN;
     var stageIdx;
-    for(stageIdx = 0; stageIdx <= this.stageList.length; stageIdx++){
-      if( !this.checkStartNextStage()){
-        console.log("Error detected, ending runStages")
+    for(stageIdx = startIdx; stageIdx <= this.stageList.length; stageIdx++){
+      const [shouldContinue, newState] = this.checkStartNextStage()
+      if( !shouldContinue ){
+        console.log(`Halting Calib process, reason ${newState}`)
+        this.processState = newState;
         break
       }
       var stage = this.stageList[stageIdx];
       console.log(`Running stage ${stage}`);
       this.currentStage = stage;
+      this.currentStageIdx = stageIdx;
 
       var stageMethodName = camelCase("run_" + stage);
       console.log('stageMethodName', stageMethodName)
@@ -403,8 +406,11 @@ class CalibProcess {
           console.log('running std method', stageMethodName)
           await this.performActionIfOk(() => this.runStdStage(stage));
         }
+        this.lastStageCompleteIdx = stageIdx;
       }
       catch (err) {
+        this.processState = STATE_ERROR;
+
         console.log(err);
         console.log('ERROR running stages:', err.message, err.stack);
         break;
@@ -476,25 +482,24 @@ class CalibProcess {
   async cmdResume() {
     this.stateRequested = STATE_RUN;
     if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
-      await this.runProcess();
+      await this.runStages(startIdx=this.lastStageCompleteIdx+1);
     }
     else if ([STATE_PAUSE].includes(this.processState)){
-      //Continue from mid-stage pause
+      //TODO enable continue from mid-stage pause
       //Eventually, PAUSE state could be mid-stage. Currently, PAUSE means "run until current stage finishes", so for now, continuing from pause is the same as continuing from idle
-      await this.runProcess();
+      await this.runStages(startIdx=this.lastStageCompleteIdx+1);
     }
     else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
-      //Already stopped, nothing happening to pause
+      //Need to clear error state before can resume
       //TODO return message
     }
     else if([STATE_STOP].includes(this.processState)){
-      //Already stopped, nothing happening to pause
-      //TODO return message
+      //Currently stopped, start from the beginning
+      await this.runStages(startIdx=0);
     }
     else if([STATE_STEP, STATE_RUN].includes(this.processState)){
-      //Currently running
-      //TODO implement more immediate PAUSE
-      //For now, we just change commanded state and wait for current stage to complete
+      //Currently running, can't resume
+      //TODO return message
     }
     await this.sendUpdate();
   }
@@ -525,8 +530,8 @@ class CalibProcess {
   async cmdPause() {
     this.stateRequested = STATE_PAUSE;
     if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
-      //Already idle, this is just a semantic state change
-      this.processState = STATE_PAUSE;
+      //Can't pause before starting
+      //TODO return message
     }
     else if([STATE_ERROR, STATE_FAIL].includes(this.processState)){
       //Already stopped, nothing happening to pause
@@ -758,18 +763,28 @@ class CalibProcess {
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_a_home.ngc'));
   }
 
-  checkContinueCurrentStage() {
+  checkError(){
     if(this.error){
       return false;
     }
     return true;
   }
+  checkContinueCurrentStage() {
+    return this.checkError()
+  }
 
   checkStartNextStage() {
     if(this.error){
-      return false;
+      return [false,STATE_ERROR];
     }
-    return true;
+    else if(this.stateRequested === STATE_PAUSE){
+      return [false,STATE_PAUSE]
+    }
+    else if(this.stateRequested === STATE_STOP){
+      return [false,STATE_STOP]
+    }
+
+    return [true,''];
   }
 
 
