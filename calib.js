@@ -643,6 +643,7 @@ class CalibProcess {
     update.processState = this.processState;
     update.stages = this.stages;
     update.status = this.status;
+    update.status.currentStage = BASIC_STAGE_LIST[this.currentStageIdx];
     update.managerStatus = this.managerStatus;
     update.spec = this.spec;
     this.commandServer.send({'calibStatus': update});
