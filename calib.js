@@ -407,7 +407,7 @@ class CalibProcess {
         }
         else{
           console.log('running std method', stageMethodName)
-          await this.performActionIfOk(() => this.runStdStage(stage));
+          this.runStdStage(stage);
         }
         this.lastStageCompleteIdx = stageIdx;
       }
@@ -664,9 +664,11 @@ class CalibProcess {
   
   //STAGE METHODS
   async runStdStage(stage){
-    var stageProgramFile = `v2_calib_${stage.toLowerCase()}.ngc`
-    console.log(`Running standard stage ${stage}, file ${stageProgramFile}`);
-    await this.rockhopperClient.runToCompletion(stageProgramFile);
+    await this.performActionIfOk(() => {
+      var stageProgramFile = `v2_calib_${stage.toLowerCase()}.ngc`
+      console.log(`Running standard stage ${stage}, file ${stageProgramFile}`);
+      return this.rockhopperClient.runToCompletion(stageProgramFile);
+    });
   }
   //Most stages consist of a single G-code program, but some require an additional layer of control so have custom methods here
   async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
