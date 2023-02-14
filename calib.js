@@ -73,13 +73,13 @@ async function clearLogFiles() {
   fs.writeFileSync(SERVICE_LOG, "");
 };
 async function deleteProgressFiles() {
-  await Promise.all([ execPromise(`rm -f ${CALIB_DIR}/Stages.*` )]);
+  await execPromise(`rm -f ${CALIB_DIR}/Stages.*` );
 }
 async function deleteSaveFiles() {
-  await Promise.all([ execPromise(`rm -f cnc_csy_savefile part_csy_savefile`, {cwd: `${CALIB_DIR}`} )]);
+  await execPromise(`rm -f cnc_csy_savefile part_csy_savefile`, {cwd: `${CALIB_DIR}`} );
 }
 async function deleteDataFiles() {
-  await Promise.all([ execPromise(`rm -f CalibrationOverlay.inc a.comp a.comp.raw a.err b.comp b.comp.raw b.err ver_a.err ver_b.err`, {cwd: `${CALIB_DIR}`}  )]);
+  await execPromise(`rm -f CalibrationOverlay.inc a.comp a.comp.raw a.err b.comp b.comp.raw b.err ver_a.err ver_b.err`, {cwd: `${CALIB_DIR}`}  );
 }
 async function resetCalibDir() {
   await clearLogFiles();
@@ -93,18 +93,18 @@ async function resetCalibDir() {
 }
 async function copyDefaultOverlay(v2variant) {
   if(v2variant === "50"){
-    await Promise.all([ execPromise(`cp ${DEFAULT_50_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
+    await execPromise(`cp ${DEFAULT_50_OVERLAY_PATH} ${OVERLAY_PATH}`);
     return true
   }
   else if(v2variant === "10"){
-    await Promise.all([ execPromise(`cp ${DEFAULT_10_OVERLAY_PATH} ${OVERLAY_PATH}`)]);
+    await execPromise(`cp ${DEFAULT_10_OVERLAY_PATH} ${OVERLAY_PATH}`);
     return true
   }
   else{console.log('v2variant type not specified, failed to copy'); return false}
 }
 async function copyDefaultCompensation() {
-  await Promise.all([ execPromise(`cp ${DEFAULT_A_COMP_PATH} ${A_COMP_PATH}`)]);
-  await Promise.all([ execPromise(`cp ${DEFAULT_B_COMP_PATH} ${B_COMP_PATH}`)]);
+  await Promise.all([ execPromise(`cp ${DEFAULT_A_COMP_PATH} ${A_COMP_PATH}`),  
+                      execPromise(`cp ${DEFAULT_B_COMP_PATH} ${B_COMP_PATH}`)]);
 }
 
 /**
@@ -331,6 +331,8 @@ class CalibProcess {
     }
     this.processType = processType;
     this.stageList = processType === "BASIC" ? BASIC_STAGE_LIST : ADVANCED_STAGE_LIST;
+
+    this.linuxcnc_updates = {};
 
     this.status = {
       lastStageStartTime: undefined,
@@ -633,7 +635,7 @@ class CalibProcess {
     console.log('zmq message')
     console.log(msg)
     for(const prop in msg){
-      this[prop] = msg[prop];
+      this.linuxcnc_updates[prop] = msg[prop];
     }
   }
 
@@ -753,8 +755,8 @@ class CalibProcess {
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc'));
     while(true){
-      await Promise.all([ execPromise(`halcmd setp ini.3.home_offset 0` )]);
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
+      await execPromise(`halcmd setp ini.3.home_offset 0`;
+      var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
       var idxStart = out[0].stdout.search("IN") + 2;
       var idxEnd = out[0].stdout.search("ini.3.home_offset");
       var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
@@ -777,8 +779,8 @@ class CalibProcess {
     }
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
     while(true){
-      await Promise.all([ execPromise(`halcmd -s setp ini.3.home_offset ${DEFAULT_A_HOME_OFFSET}` )]);
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.3.home_offset` )]);
+      await execPromise(`halcmd -s setp ini.3.home_offset ${DEFAULT_A_HOME_OFFSET}` );
+      var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
       var idxStart = out[0].stdout.search("IN") + 2;
       var idxEnd = out[0].stdout.search("ini.3.home_offset");
       var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
@@ -800,8 +802,8 @@ class CalibProcess {
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_b_home_state.ngc'))
     while(true){
-      await Promise.all([ execPromise(`halcmd setp ini.4.home_offset 0` )]);
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      await execPromise(`halcmd setp ini.4.home_offset 0` );
+      var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
       var idxStart = out[0].stdout.search("IN") + 2;
       var idxEnd = out[0].stdout.search("ini.4.home_offset");
       var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
@@ -827,8 +829,8 @@ class CalibProcess {
 
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
     while(true){
-      await Promise.all([ execPromise(`halcmd -s setp ini.4.home_offset ${DEFAULT_B_HOME_OFFSET}` )]);
-      var out = await Promise.all([ execPromise(`halcmd -s show pin ini.4.home_offset` )]);
+      await execPromise(`halcmd -s setp ini.4.home_offset ${DEFAULT_B_HOME_OFFSET}` );
+      var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
       var idxStart = out[0].stdout.search("IN") + 2;
       var idxEnd = out[0].stdout.search("ini.4.home_offset");
       var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
@@ -875,12 +877,11 @@ class CalibProcess {
     console.log('runVerifyALine');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     var homingAttemptsCount = 0;
-    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_verify.ngc'));
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc'));
 
-      if(Math.abs(this.a_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD){
-        console.log("VERIFY_A home position within range, error " + this.a_pos);
+      if(Math.abs(this.linuxcnc_updates.a_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD){
+        console.log("VERIFY_A home position within range, error " + this.linuxcnc_updates.a_pos);
         break;
       }
 
@@ -901,13 +902,12 @@ class CalibProcess {
 
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
-    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_b_home_verify.ngc'));
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc'));
-      console.log(this.b_pos)
-      console.log(Math.abs(this.b_pos-360))
-      if(Math.abs(this.b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD || Math.abs(this.b_pos-360) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD ){
-        console.log("VERIFY_B home position within range, error " + this.b_pos);
+      console.log(this.linuxcnc_updates.b_pos)
+      console.log(Math.abs(this.linuxcnc_updates.b_pos-360))
+      if(Math.abs(this.linuxcnc_updates.b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD || Math.abs(this.linuxcnc_updates.b_pos-360) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD ){
+        console.log("VERIFY_B home position within range, error " + this.linuxcnc_updates.b_pos);
         break;
       }
 
