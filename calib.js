@@ -875,6 +875,7 @@ class CalibProcess {
     console.log('runVerifyALine');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     var homingAttemptsCount = 0;
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_verify.ngc'));
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc'));
 
@@ -900,6 +901,7 @@ class CalibProcess {
 
     var homingAttemptsCount = 0;
     var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
+    await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_b_home_verify.ngc'));
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc'));
       console.log(this.b_pos)
