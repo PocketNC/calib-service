@@ -935,6 +935,8 @@ class CalibProcess {
     var detailsName = ["details", this.serialNum, year, month, day].join("-") + ".zip";
     var resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
 
+    await execPromise(`cp ${POCKETNC_VAR_DIRECTORY}/python.log ${CALIB_DIR}`);
+
     zipDirectory(RESULTS_DIR, POCKETNC_VAR_DIRECTORY + "/" + resultsName).then(() => {}).catch((err) => (console.log('Error zipping results dir' + err)));
     zipDirectory(CALIB_DIR, POCKETNC_VAR_DIRECTORY + "/" + detailsName).then(() => {}).catch((err) => (console.log('Error zipping calib dir' + err)));
     const client = new ftp.Client();
