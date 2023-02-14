@@ -755,7 +755,7 @@ class CalibProcess {
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc'));
     while(true){
-      await execPromise(`halcmd setp ini.3.home_offset 0`;
+      await execPromise(`halcmd setp ini.3.home_offset 0`);
       var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
       var idxStart = out[0].stdout.search("IN") + 2;
       var idxEnd = out[0].stdout.search("ini.3.home_offset");
