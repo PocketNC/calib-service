@@ -407,7 +407,7 @@ class CalibProcess {
         }
         else{
           console.log('running std method', stageMethodName)
-          this.runStdStage(stage);
+          await this.runStdStage(stage);
         }
         this.lastStageCompleteIdx = stageIdx;
       }
@@ -759,9 +759,9 @@ class CalibProcess {
     while(true){
       await execPromise(`halcmd setp ini.3.home_offset 0`);
       var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.3.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      var idxStart = out.stdout.search("IN") + 2;
+      var idxEnd = out.stdout.search("ini.3.home_offset");
+      var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
       if(curr === 0.0){
         break;
       }
@@ -783,9 +783,9 @@ class CalibProcess {
     while(true){
       await execPromise(`halcmd -s setp ini.3.home_offset ${DEFAULT_A_HOME_OFFSET}` );
       var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.3.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      var idxStart = out.stdout.search("IN") + 2;
+      var idxEnd = out.stdout.search("ini.3.home_offset");
+      var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
       if(curr === DEFAULT_A_HOME_OFFSET){
         break;
       }
@@ -806,9 +806,9 @@ class CalibProcess {
     while(true){
       await execPromise(`halcmd setp ini.4.home_offset 0` );
       var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.4.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      var idxStart = out.stdout.search("IN") + 2;
+      var idxEnd = out.stdout.search("ini.4.home_offset");
+      var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
       if(curr === 0){
         break;
       }
@@ -833,9 +833,9 @@ class CalibProcess {
     while(true){
       await execPromise(`halcmd -s setp ini.4.home_offset ${DEFAULT_B_HOME_OFFSET}` );
       var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
-      var idxStart = out[0].stdout.search("IN") + 2;
-      var idxEnd = out[0].stdout.search("ini.4.home_offset");
-      var curr = parseFloat(out[0].stdout.slice(idxStart, idxEnd))
+      var idxStart = out.stdout.search("IN") + 2;
+      var idxEnd = out.stdout.search("ini.4.home_offset");
+      var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
       if(curr === DEFAULT_B_HOME_OFFSET){
         break;
       }
