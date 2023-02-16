@@ -926,6 +926,11 @@ class CalibProcess {
   }
   async runUploadFiles(){
     console.log('runUploadFiles');
+    /*
+    *Copies python log into calib dir
+    *Zip and FTP upload two bundles: one for entire calib dir, one with only calibration files
+    *Convert calibrationOverlay to legacy format, then write it and comp files to emmc
+    */
 
     var date = new Date();
     let year = date.getFullYear();
@@ -951,8 +956,9 @@ class CalibProcess {
     } catch(err) {
       console.log(err);
     }
-
     client.close();
+    
+    await this.rockhopperClient.writeLegacyCompensation();
   }
 
   async runTestProgram() {

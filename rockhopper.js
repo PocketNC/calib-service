@@ -123,7 +123,14 @@ class RockhopperClient {
       )
     )
   }
-
+  writeLegacyCompensation = () => {
+    const id = "PUT_WRITE_LEGACY_COMPENSATION";
+    return this.genCommandPromise({
+      "id": id,
+      "name":"write_legacy_compensation",
+      "command":"put",
+    });
+  }
   runToCompletion = (filename, type="CALIBRATION") => {
     const id = "PUT_RUN_TO_COMPLETION_" + Date.now();
     return this.genCommandPromise({
