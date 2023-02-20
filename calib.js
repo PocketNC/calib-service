@@ -958,7 +958,7 @@ class CalibProcess {
     }
     client.close();
     
-    await this.rockhopperClient.writeLegacyCompensation();
+    await this.rockhopperClient.writeLegacyCalibration();
   }
 
   async runTestProgram() {
