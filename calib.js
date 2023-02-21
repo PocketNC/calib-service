@@ -415,7 +415,7 @@ class CalibProcess {
         this.processState = STATE_ERROR;
 
         console.log(err);
-        console.log('ERROR running stages:', err.message, err.stack);
+        console.log('ERROR running stage:', stage);
         break;
       }  
     }
@@ -878,7 +878,8 @@ class CalibProcess {
   async runVerifyALine(){
     console.log('runVerifyALine');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
-    var homingAttemptsCount = 0;
+    let homingAttemptsCount = 0;
+    let totalError = 0;
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc'));
 
@@ -888,9 +889,21 @@ class CalibProcess {
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
+      totalError += this.linuxcnc_updates.a_pos;
+      if(homingAttemptsCount == NUM_VERIFY_HOME_ATTEMPTS) {
+        // We would expect this to not happen, but there seems to be a discrepency that we're not accounting for.
+        // Let's average the small value that we found and update the home offset accordingly, then do the check
+        // again. If we fail at that point, it's an error.
+        console.log("A-axis homing verification failed to achieve home position with error <0.01 in 10 attempts. Averaging results and changing home offset, then attempt another 10 times.");
+        const overlay = await this.rockhopperClient.getConfigOverlay();
+        const a_home_offset_param = overlay.parameters.find((param) => param.values.section == "JOINT_3" && param.values.name == "HOME_OFFSET");
+        const a_home_offset = parseFloat(a_home_offset_param.values.value)+(totalError/homingAttemptsCount);
+        a_home_offset_param.values.value = a_home_offset.toString();
+        await this.rockhopperClient.setConfigOverlay(overlay);
+        await execPromise(`halcmd setp ini.3.home_offset ${a_home_offset.toFixed(8)}`);
+      } else if(homingAttemptsCount == 2*NUM_VERIFY_HOME_ATTEMPTS) {
         this.processState = STATE_FAIL
-        throw new Error("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
+        throw new Error("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts, even after adjusting home offset again.");
       }
       await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 A-5"));
       await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([3]));
@@ -902,21 +915,36 @@ class CalibProcess {
   async runVerifyBLine(){
     console.log('runVerifyBLine');
 
-    var homingAttemptsCount = 0;
-    var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
+    let homingAttemptsCount = 0;
+    let totalError = 0;
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc'));
-      console.log(this.linuxcnc_updates.b_pos)
-      console.log(Math.abs(this.linuxcnc_updates.b_pos-360))
-      if(Math.abs(this.linuxcnc_updates.b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD || Math.abs(this.linuxcnc_updates.b_pos-360) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD ){
-        console.log("VERIFY_B home position within range, error " + this.linuxcnc_updates.b_pos);
+      let b_pos = this.linuxcnc_updates.b_pos;
+      if(b_pos > 180) {
+        b_pos -= 360;
+      }
+
+      if(Math.abs(b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD) {
+        console.log("VERIFY_B home position within range, error " + b_pos);
         break;
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
+      totalError += b_pos;
+      if(homingAttemptsCount == NUM_VERIFY_HOME_ATTEMPTS) {
+        // We would expect this to not happen, but there seems to be a discrepency that we're not accounting for.
+        // Let's average the small value that we found and update the home offset accordingly, then do the check
+        // again. If we fail at that point, it's an error.
+        console.log("B-axis homing verification failed to achieve home position with error <0.01 in 10 attempts. Averaging results and changing home offset, then attempt another 10 times.");
+        const overlay = await this.rockhopperClient.getConfigOverlay();
+        const b_home_offset_param = overlay.parameters.find((param) => param.values.section == "JOINT_4" && param.values.name == "HOME_OFFSET");
+        const b_home_offset = parseFloat(b_home_offset_param.values.value)+(totalError/homingAttemptsCount);
+        b_home_offset_param.values.value = b_home_offset.toString();
+        await this.rockhopperClient.setConfigOverlay(overlay);
+        await execPromise(`halcmd setp ini.4.home_offset ${b_home_offset.toFixed(8)}`);
+      } else if(homingAttemptsCount == 2*NUM_VERIFY_HOME_ATTEMPTS) {
         this.processState = STATE_FAIL
-        throw new Error("Halting B-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
+        throw new Error("Halting B-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts, even after adjusting home offset again.");
       }
       await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 B-5"));
       await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([4]));
