@@ -7,7 +7,7 @@ const camelCase = require('to-camel-case');
 const { RockhopperClient } = require('./rockhopper');
 const { CommandServer } = require('./command-server');
 const ftp = require("basic-ftp");
-var archiver = require('archiver');
+const archiver = require('archiver');
 
 
 const POCKETNC_DIRECTORY = process.env.POCKETNC_DIRECTORY;
@@ -18,8 +18,9 @@ const OVERLAY_PATH = POCKETNC_VAR_DIRECTORY + '/CalibrationOverlay.inc';
 const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 const STAGES_DIR = CALIB_DIR + "/stages";
 const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
-const CALIB_LOG = CALIB_DIR + '/calib.log';
 const SERVICE_LOG = CALIB_DIR + '/calib-service.log';
+const PYTHON_LOG = POCKETNC_VAR_DIRECTORY + '/python.log';
+const ROCKHOPPER_LOG = "/var/log/linuxcnc_webserver.log";
 const DEFAULT_A_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/a.comp.default';
 const DEFAULT_B_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/b.comp.default';
 const DEFAULT_10_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/CalibrationOverlay.inc.default';
@@ -69,7 +70,6 @@ async function copyNewCompFilesToVarDir() {
   }
 }
 async function clearLogFiles() {
-  fs.writeFileSync(CALIB_LOG, "");
   fs.writeFileSync(SERVICE_LOG, "");
 };
 async function deleteProgressFiles() {
@@ -106,29 +106,6 @@ async function copyDefaultCompensation() {
   await Promise.all([ execPromise(`cp ${DEFAULT_A_COMP_PATH} ${A_COMP_PATH}`),  
                       execPromise(`cp ${DEFAULT_B_COMP_PATH} ${B_COMP_PATH}`)]);
 }
-
-/**
- * @param {String} sourceDir: /some/folder/to/compress
- * @param {String} outPath: /path/to/created.zip
- * @returns {Promise}
- * Source: https://stackoverflow.com/a/51518100/12222371
- */
-function zipDirectory(sourceDir, outPath) {
-  const archive = archiver('zip', { zlib: { level: 9 }});
-  const stream = fs.createWriteStream(outPath);
-
-  return new Promise((resolve, reject) => {
-    archive
-      .directory(sourceDir, false)
-      .on('error', err => reject(err))
-      .pipe(stream)
-    ;
-
-    stream.on('close', () => resolve());
-    archive.finalize();
-  });
-}
-
 
 function readCompensationFiles() {
   var aData = fs.readFileSync(A_COMP_PATH, 'ascii');
@@ -674,6 +651,9 @@ class CalibProcess {
   async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
     console.log('runEraseCompensation');
 
+    // Set static IP address
+    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 manual 10.0.0.100 255.255.255.0');
+
     await copyDefaultOverlay(this.v2variant);
     await copyDefaultCompensation();
     await resetCalibDir();
@@ -968,10 +948,24 @@ class CalibProcess {
     var detailsName = ["details", this.serialNum, year, month, day].join("-") + ".zip";
     var resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
 
-    await execPromise(`cp ${POCKETNC_VAR_DIRECTORY}/python.log ${CALIB_DIR}`);
+    const resultsArchive = archiver('zip', { zlib: { level: 9 }});
+    const resultsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + resultsName);
+    resultsArchive.pipe(resultsStream);
+    resultsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    resultsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    resultsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+    await resultsArchive.finalize();
 
-    zipDirectory(RESULTS_DIR, POCKETNC_VAR_DIRECTORY + "/" + resultsName).then(() => {}).catch((err) => (console.log('Error zipping results dir' + err)));
-    zipDirectory(CALIB_DIR, POCKETNC_VAR_DIRECTORY + "/" + detailsName).then(() => {}).catch((err) => (console.log('Error zipping calib dir' + err)));
+    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
+    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
+    detailsArchive.pipe(detailsStream);
+
+    detailsArchive.directory(CALIB_DIR, false);
+    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
+    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
+
+    await detailsArchive.finalize();
+
     const client = new ftp.Client();
     try {
       await client.access({
@@ -987,6 +981,9 @@ class CalibProcess {
     client.close();
     
     await this.rockhopperClient.writeLegacyCalibration();
+
+    // Set back to DHCP
+    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
   }
 
   async runTestProgram() {
