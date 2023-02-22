@@ -390,6 +390,10 @@ class CalibProcess {
       }
       catch (err) {
         this.processState = STATE_ERROR;
+        this.error = true;
+        this.errorMsg = err.toString();
+
+        this.uploadErrorFiles()
 
         console.log(err);
         console.log('ERROR running stage:', stage);
@@ -633,8 +637,11 @@ class CalibProcess {
     if(msg.data.type && msg.data.type === 'error'){
       this.error = true;
       this.errorMsg = msg.data.text;
+
       //Send an extra abort to Rockhopper, timing issues mean we could have started the next thing before this message arrived
       await this.rockhopperClient.abortCmd();
+
+      this.uploadErrorFiles();
     }
   }
 
@@ -961,29 +968,135 @@ class CalibProcess {
     detailsArchive.pipe(detailsStream);
 
     detailsArchive.directory(CALIB_DIR, false);
+    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
     detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
     detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
 
     await detailsArchive.finalize();
 
     const client = new ftp.Client();
-    try {
-      await client.access({
-        host: "10.0.0.10",
-        port: 5000
-      });
-
-      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
-      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
-    } catch(err) {
-      console.log(err);
+    const NUM_ATTEMPTS = 5;
+    let num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.access({
+          host: "10.0.0.10",
+          port: 5000
+        });
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when connecting to 10.0.0.10:5000");
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
     }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", resultsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", detailsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
     client.close();
     
     await this.rockhopperClient.writeLegacyCalibration();
 
     // Set back to DHCP
     await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
+  }
+  async uploadErrorFiles(){
+    console.log('uploadErrorFiles');
+    /*
+    *Copies python log into calib dir
+    *Zip and FTP upload two bundles: one for entire calib dir, one with only calibration files
+    *Convert calibrationOverlay to legacy format, then write it and comp files to emmc
+    */
+
+    var date = new Date();
+    let year = date.getFullYear();
+    let month = date.getMonth() + 1;
+    let day = date.getDate();
+
+    var detailsName = ["details", this.serialNum, year, month, day, "FAILED"].join("-") + ".zip";
+
+    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
+    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
+    detailsArchive.pipe(detailsStream);
+
+    detailsArchive.directory(CALIB_DIR, false);
+    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
+    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
+
+    await detailsArchive.finalize();
+
+    const client = new ftp.Client();
+    const NUM_ATTEMPTS = 5;
+    let num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.access({
+          host: "10.0.0.10",
+          port: 5000
+        });
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when connecting to 10.0.0.10:5000");
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", detailsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    client.close();
   }
 
   async runTestProgram() {
