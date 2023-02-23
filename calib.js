@@ -335,15 +335,12 @@ class CalibProcess {
     this.linuxcnc_updates = {};
 
     this.status = {
-      lastStageStartTime: undefined,
-      lastStageCompleteTime: undefined,
-      begun: false,
       processType: null,
       cmmConnected: false,
       cmmError: false,
       cncError: false,
       currentStep: null,
-      currentStage: STAGES.PROBE_MACHINE_POS,
+      currentStage: null,
       specFailure: false,
       error: false,
       errorMsg: null,
@@ -376,6 +373,7 @@ class CalibProcess {
 
     this.stageIdx = 0;
     this.lastStageCompleteIdx = -1;
+    this.currentStageIdx = -1;
 
     this.error = null;
     this.errorMsg = null;
@@ -390,7 +388,11 @@ class CalibProcess {
       if( !shouldContinue ){
         console.log(`Halting Calib process, reason ${newState}`)
         this.processState = newState;
-        break
+        await this.sendUpdate();
+        if( [STATE_STOP].includes(this.processState)){
+          process.exit(0);
+        }
+        break;
       }
       var stage = this.stageList[stageIdx];
       console.log(`Running stage ${stage}`);
@@ -410,6 +412,11 @@ class CalibProcess {
           await this.runStdStage(stage);
         }
         this.lastStageCompleteIdx = stageIdx;
+        if(this.lastStageCompleteIdx === this.stageList.length-1){
+          this.processState = STATE_COMPLETE;
+          await this.sendUpdate();
+          process.exit(0);
+        }
       }
       catch (err) {
         this.processState = STATE_ERROR;
@@ -483,6 +490,7 @@ class CalibProcess {
     await this.sendUpdate();
   }
   async cmdResume() {
+    console.log('cmdResume')
     this.stateRequested = STATE_RUN;
     if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       await this.runStages(startIdx=this.lastStageCompleteIdx+1);
@@ -503,6 +511,7 @@ class CalibProcess {
     else if([STATE_STEP, STATE_RUN].includes(this.processState)){
       //Currently running, can't resume
       //TODO return message
+
     }
     await this.sendUpdate();
   }
@@ -531,6 +540,7 @@ class CalibProcess {
     await this.sendUpdate();
   }
   async cmdPause() {
+    console.log('cmdPause')
     this.stateRequested = STATE_PAUSE;
     if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
       //Can't pause before starting
@@ -556,7 +566,7 @@ class CalibProcess {
     console.log('CmdStop, processState is ' + this.processState);
     this.stateRequested = STATE_STOP;
     await this.sendUpdate();
-    if ([STATE_INIT, STATE_IDLE].includes(this.processState)){
+    if ([STATE_INIT, STATE_IDLE, STATE_COMPLETE, STATE_STOP].includes(this.processState)){
       //Already idle. Exit process
       process.exit(0);
     }
@@ -645,7 +655,8 @@ class CalibProcess {
     update.processState = this.processState;
     update.stages = this.stages;
     update.status = this.status;
-    update.status.currentStage = BASIC_STAGE_LIST[this.currentStageIdx];
+    update.status.currentStageIdx = this.currentStageIdx;
+    update.status.currentStage = this.currentStageIdx === -1 ? "Not Started" : BASIC_STAGE_LIST[this.currentStageIdx];
     update.managerStatus = this.managerStatus;
     update.spec = this.spec;
     this.commandServer.send({'calibStatus': update});

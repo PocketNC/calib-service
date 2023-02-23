@@ -53,6 +53,7 @@ class CommandServer {
     this.wss.on('connection', (ws) => {
       console.log('this.commandServer.connections')
       console.log(this.connections)
+      this.calibProcess.sendUpdate()
       this.connections.push(ws);
 
       ws.on('close', (reasonCode, description) => {
