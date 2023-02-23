@@ -1,9 +1,11 @@
 const WebSocketClient = require('websocket').client;
 
 class RockhopperClient {
-  constructor() {
+  constructor(host="localhost", port=8000) {
     this.callbacks = {}
     this.state = {};
+    this.host = host;
+    this.port = port;
 
     this.connected = false;
     this.intervalConnect = false;
@@ -60,10 +62,10 @@ class RockhopperClient {
       const callback = (msg) => {
         if(msg.code === '?OK') {
           this.unregisterCallback(msg.id);
-          resolve();
+          resolve(msg);
         } else {
           this.unregisterCallback(msg.id);
-          reject();
+          reject(msg);
         }
       };
       this.registerCallback(msgData.id, callback);
@@ -72,7 +74,7 @@ class RockhopperClient {
   }
 
   connect = () => {
-    this.client.connect('ws://localhost:8000/websocket/');
+    this.client.connect(`ws://${this.host}:${this.port}/websocket/`);
   };
 
   // TODO - restructure always connect implementation/api
@@ -160,6 +162,23 @@ class RockhopperClient {
     };
     this.unregisterCallback(msgData.id);
     this.send(JSON.stringify(msgData));
+  }
+
+  getConfigOverlay = () => {
+    return this.genCommandPromise({
+      id: "GET_CONFIG_OVERLAY",
+      command: "get",
+      name: "config_overlay"
+    }).then((msg) => msg.data);
+  }
+
+  setConfigOverlay = (overlay) => {
+    return this.genCommandPromise({
+      id: "SET_CONFIG_OVERLAY",
+      command: "put",
+      name: "config",
+      data: overlay
+    });
   }
 
 

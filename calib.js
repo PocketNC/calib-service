@@ -7,7 +7,7 @@ const camelCase = require('to-camel-case');
 const { RockhopperClient } = require('./rockhopper');
 const { CommandServer } = require('./command-server');
 const ftp = require("basic-ftp");
-var archiver = require('archiver');
+const archiver = require('archiver');
 
 
 const POCKETNC_DIRECTORY = process.env.POCKETNC_DIRECTORY;
@@ -18,8 +18,9 @@ const OVERLAY_PATH = POCKETNC_VAR_DIRECTORY + '/CalibrationOverlay.inc';
 const CALIB_DIR = POCKETNC_VAR_DIRECTORY + "/calib";
 const STAGES_DIR = CALIB_DIR + "/stages";
 const RESULTS_DIR = POCKETNC_VAR_DIRECTORY + "/calib_results";
-const CALIB_LOG = CALIB_DIR + '/calib.log';
 const SERVICE_LOG = CALIB_DIR + '/calib-service.log';
+const PYTHON_LOG = POCKETNC_VAR_DIRECTORY + '/python.log';
+const ROCKHOPPER_LOG = "/var/log/linuxcnc_webserver.log";
 const DEFAULT_A_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/a.comp.default';
 const DEFAULT_B_COMP_PATH = POCKETNC_DIRECTORY + '/Settings/b.comp.default';
 const DEFAULT_10_OVERLAY_PATH = POCKETNC_DIRECTORY + '/Settings/CalibrationOverlay.inc.default';
@@ -69,7 +70,6 @@ async function copyNewCompFilesToVarDir() {
   }
 }
 async function clearLogFiles() {
-  fs.writeFileSync(CALIB_LOG, "");
   fs.writeFileSync(SERVICE_LOG, "");
 };
 async function deleteProgressFiles() {
@@ -106,29 +106,6 @@ async function copyDefaultCompensation() {
   await Promise.all([ execPromise(`cp ${DEFAULT_A_COMP_PATH} ${A_COMP_PATH}`),  
                       execPromise(`cp ${DEFAULT_B_COMP_PATH} ${B_COMP_PATH}`)]);
 }
-
-/**
- * @param {String} sourceDir: /some/folder/to/compress
- * @param {String} outPath: /path/to/created.zip
- * @returns {Promise}
- * Source: https://stackoverflow.com/a/51518100/12222371
- */
-function zipDirectory(sourceDir, outPath) {
-  const archive = archiver('zip', { zlib: { level: 9 }});
-  const stream = fs.createWriteStream(outPath);
-
-  return new Promise((resolve, reject) => {
-    archive
-      .directory(sourceDir, false)
-      .on('error', err => reject(err))
-      .pipe(stream)
-    ;
-
-    stream.on('close', () => resolve());
-    archive.finalize();
-  });
-}
-
 
 function readCompensationFiles() {
   var aData = fs.readFileSync(A_COMP_PATH, 'ascii');
@@ -420,9 +397,13 @@ class CalibProcess {
       }
       catch (err) {
         this.processState = STATE_ERROR;
+        this.error = true;
+        this.errorMsg = err.toString();
+
+        this.uploadErrorFiles()
 
         console.log(err);
-        console.log('ERROR running stages:', err.message, err.stack);
+        console.log('ERROR running stage:', stage);
         break;
       }  
     }
@@ -667,8 +648,11 @@ class CalibProcess {
     if(msg.data.type && msg.data.type === 'error'){
       this.error = true;
       this.errorMsg = msg.data.text;
+
       //Send an extra abort to Rockhopper, timing issues mean we could have started the next thing before this message arrived
       await this.rockhopperClient.abortCmd();
+
+      this.uploadErrorFiles();
     }
   }
 
@@ -684,6 +668,9 @@ class CalibProcess {
   //Most stages consist of a single G-code program, but some require an additional layer of control so have custom methods here
   async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
     console.log('runEraseCompensation');
+
+    // Set static IP address
+    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 manual 10.0.0.100 255.255.255.0');
 
     await copyDefaultOverlay(this.v2variant);
     await copyDefaultCompensation();
@@ -889,7 +876,8 @@ class CalibProcess {
   async runVerifyALine(){
     console.log('runVerifyALine');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
-    var homingAttemptsCount = 0;
+    let homingAttemptsCount = 0;
+    let totalError = 0;
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_a_home_verify.ngc'));
 
@@ -899,9 +887,21 @@ class CalibProcess {
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
+      totalError += this.linuxcnc_updates.a_pos;
+      if(homingAttemptsCount == NUM_VERIFY_HOME_ATTEMPTS) {
+        // We would expect this to not happen, but there seems to be a discrepency that we're not accounting for.
+        // Let's average the small value that we found and update the home offset accordingly, then do the check
+        // again. If we fail at that point, it's an error.
+        console.log("A-axis homing verification failed to achieve home position with error <0.01 in 10 attempts. Averaging results and changing home offset, then attempt another 10 times.");
+        const overlay = await this.rockhopperClient.getConfigOverlay();
+        const a_home_offset_param = overlay.parameters.find((param) => param.values.section == "JOINT_3" && param.values.name == "HOME_OFFSET");
+        const a_home_offset = parseFloat(a_home_offset_param.values.value)+(totalError/homingAttemptsCount);
+        a_home_offset_param.values.value = a_home_offset.toString();
+        await this.rockhopperClient.setConfigOverlay(overlay);
+        await execPromise(`halcmd setp ini.3.home_offset ${a_home_offset.toFixed(8)}`);
+      } else if(homingAttemptsCount == 2*NUM_VERIFY_HOME_ATTEMPTS) {
         this.processState = STATE_FAIL
-        throw new Error("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
+        throw new Error("Halting A-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts, even after adjusting home offset again.");
       }
       await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 A-5"));
       await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([3]));
@@ -913,21 +913,36 @@ class CalibProcess {
   async runVerifyBLine(){
     console.log('runVerifyBLine');
 
-    var homingAttemptsCount = 0;
-    var threshold = ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD; //TODO remove
+    let homingAttemptsCount = 0;
+    let totalError = 0;
     while(true){
       await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_probe_b_home_verify.ngc'));
-      console.log(this.linuxcnc_updates.b_pos)
-      console.log(Math.abs(this.linuxcnc_updates.b_pos-360))
-      if(Math.abs(this.linuxcnc_updates.b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD || Math.abs(this.linuxcnc_updates.b_pos-360) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD ){
-        console.log("VERIFY_B home position within range, error " + this.linuxcnc_updates.b_pos);
+      let b_pos = this.linuxcnc_updates.b_pos;
+      if(b_pos > 180) {
+        b_pos -= 360;
+      }
+
+      if(Math.abs(b_pos) < ROTARY_VERIFICATION_HOMING_ERROR_THRESHOLD) {
+        console.log("VERIFY_B home position within range, error " + b_pos);
         break;
       }
 
       homingAttemptsCount++;
-      if(homingAttemptsCount > NUM_VERIFY_HOME_ATTEMPTS){
+      totalError += b_pos;
+      if(homingAttemptsCount == NUM_VERIFY_HOME_ATTEMPTS) {
+        // We would expect this to not happen, but there seems to be a discrepency that we're not accounting for.
+        // Let's average the small value that we found and update the home offset accordingly, then do the check
+        // again. If we fail at that point, it's an error.
+        console.log("B-axis homing verification failed to achieve home position with error <0.01 in 10 attempts. Averaging results and changing home offset, then attempt another 10 times.");
+        const overlay = await this.rockhopperClient.getConfigOverlay();
+        const b_home_offset_param = overlay.parameters.find((param) => param.values.section == "JOINT_4" && param.values.name == "HOME_OFFSET");
+        const b_home_offset = parseFloat(b_home_offset_param.values.value)+(totalError/homingAttemptsCount);
+        b_home_offset_param.values.value = b_home_offset.toString();
+        await this.rockhopperClient.setConfigOverlay(overlay);
+        await execPromise(`halcmd setp ini.4.home_offset ${b_home_offset.toFixed(8)}`);
+      } else if(homingAttemptsCount == 2*NUM_VERIFY_HOME_ATTEMPTS) {
         this.processState = STATE_FAIL
-        throw new Error("Halting B-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts");
+        throw new Error("Halting B-axis homing verification, failed to achieve home position with error <0.01 in 10 attempts, even after adjusting home offset again.");
       }
       await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync("G0 B-5"));
       await this.performActionIfOk(() => this.rockhopperClient.unhomeAxisAsync([4]));
@@ -951,25 +966,148 @@ class CalibProcess {
     var detailsName = ["details", this.serialNum, year, month, day].join("-") + ".zip";
     var resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
 
-    await execPromise(`cp ${POCKETNC_VAR_DIRECTORY}/python.log ${CALIB_DIR}`);
+    const resultsArchive = archiver('zip', { zlib: { level: 9 }});
+    const resultsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + resultsName);
+    resultsArchive.pipe(resultsStream);
+    resultsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    resultsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    resultsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+    await resultsArchive.finalize();
 
-    zipDirectory(RESULTS_DIR, POCKETNC_VAR_DIRECTORY + "/" + resultsName).then(() => {}).catch((err) => (console.log('Error zipping results dir' + err)));
-    zipDirectory(CALIB_DIR, POCKETNC_VAR_DIRECTORY + "/" + detailsName).then(() => {}).catch((err) => (console.log('Error zipping calib dir' + err)));
+    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
+    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
+    detailsArchive.pipe(detailsStream);
+
+    detailsArchive.directory(CALIB_DIR, false);
+    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
+    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
+
+    await detailsArchive.finalize();
+
     const client = new ftp.Client();
-    try {
-      await client.access({
-        host: "10.0.0.10",
-        port: 5000
-      });
-
-      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
-      await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
-    } catch(err) {
-      console.log(err);
+    const NUM_ATTEMPTS = 5;
+    let num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.access({
+          host: "10.0.0.10",
+          port: 5000
+        });
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when connecting to 10.0.0.10:5000");
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
     }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", resultsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", detailsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
     client.close();
     
     await this.rockhopperClient.writeLegacyCalibration();
+
+    // Set back to DHCP
+    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
+  }
+  async uploadErrorFiles(){
+    console.log('uploadErrorFiles');
+    /*
+    *Copies python log into calib dir
+    *Zip and FTP upload two bundles: one for entire calib dir, one with only calibration files
+    *Convert calibrationOverlay to legacy format, then write it and comp files to emmc
+    */
+
+    var date = new Date();
+    let year = date.getFullYear();
+    let month = date.getMonth() + 1;
+    let day = date.getDate();
+
+    var detailsName = ["details", this.serialNum, year, month, day, "FAILED"].join("-") + ".zip";
+
+    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
+    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
+    detailsArchive.pipe(detailsStream);
+
+    detailsArchive.directory(CALIB_DIR, false);
+    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
+    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
+
+    await detailsArchive.finalize();
+
+    const client = new ftp.Client();
+    const NUM_ATTEMPTS = 5;
+    let num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.access({
+          host: "10.0.0.10",
+          port: 5000
+        });
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when connecting to 10.0.0.10:5000");
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    num_failed_attempts = 0;
+    for(let i = 0; i < NUM_ATTEMPTS; i++) {
+      try {
+        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        break;
+      } catch(err) {
+        num_failed_attempts++;
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", detailsName);
+        await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
+        if(num_failed_attempts == NUM_ATTEMPTS) {
+          throw err;
+        }
+      }
+    }
+
+    client.close();
   }
 
   async runTestProgram() {
