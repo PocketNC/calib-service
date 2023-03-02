@@ -60,37 +60,6 @@ async function copyExistingOverlay() {
     console.log(error);
   }
 }
-async function copyNewCompFilesToVarDir() {
-  try {
-    await fs.copyFile(CALIB_DIR + "/CalibrationOverlay.inc", OVERLAY_PATH, (err))
-    await fs.copyFile(CALIB_DIR + "/a.comp.raw", A_COMP_PATH)
-    await fs.copyFile(CALIB_DIR + "/b.comp.raw", B_COMP_PATH)
-  } catch {
-    console.log('Error copying new comp files to VAR dir')
-  }
-}
-async function clearLogFiles() {
-  fs.writeFileSync(SERVICE_LOG, "");
-};
-async function deleteProgressFiles() {
-  await execPromise(`rm -f ${CALIB_DIR}/Stages.*` );
-}
-async function deleteSaveFiles() {
-  await execPromise(`rm -f cnc_csy_savefile part_csy_savefile`, {cwd: `${CALIB_DIR}`} );
-}
-async function deleteDataFiles() {
-  await execPromise(`rm -f CalibrationOverlay.inc a.comp a.comp.raw a.err b.comp b.comp.raw b.err ver_a.err ver_b.err`, {cwd: `${CALIB_DIR}`}  );
-}
-async function resetCalibDir() {
-  await clearLogFiles();
-
-  //Make a backup of the initial CalibrationOverlay, which is in effect until restart for verify
-  await copyExistingOverlay();
-
-  await deleteProgressFiles();
-  await deleteSaveFiles();
-  await deleteDataFiles();
-}
 async function copyDefaultOverlay(v2variant) {
   if(v2variant === "50"){
     await execPromise(`cp ${DEFAULT_50_OVERLAY_PATH} ${OVERLAY_PATH}`);
@@ -672,9 +641,9 @@ class CalibProcess {
     // Set static IP address
     await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 manual 10.0.0.100 255.255.255.0');
 
+    await copyExistingOverlay();
     await copyDefaultOverlay(this.v2variant);
     await copyDefaultCompensation();
-    await resetCalibDir();
 
     console.log('Compensation files cleared, restarting services.');
     await this.rockhopperClient.restartServices();
