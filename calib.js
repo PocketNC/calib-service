@@ -919,42 +919,12 @@ class CalibProcess {
     }
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_verify_b_line.ngc'));
   }
+
   async runUploadFiles(){
     console.log('runUploadFiles');
-    /*
-    *Copies python log into calib dir
-    *Zip and FTP upload two bundles: one for entire calib dir, one with only calibration files
-    *Convert calibrationOverlay to legacy format, then write it and comp files to emmc
-    */
 
-    var date = new Date();
-    let year = date.getFullYear();
-    let month = date.getMonth() + 1;
-    let day = date.getDate();
-
-    var detailsName = ["details", this.serialNum, year, month, day].join("-") + ".zip";
-    var resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
-
-    const resultsArchive = archiver('zip', { zlib: { level: 9 }});
-    const resultsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + resultsName);
-    resultsArchive.pipe(resultsStream);
-    resultsArchive.file(A_COMP_PATH, { name: 'a.comp' });
-    resultsArchive.file(B_COMP_PATH, { name: 'b.comp' });
-    resultsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
-    await resultsArchive.finalize();
-
-    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
-    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
-    detailsArchive.pipe(detailsStream);
-
-    detailsArchive.directory(CALIB_DIR, false);
-    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
-    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
-    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
-    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
-    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
-
-    await detailsArchive.finalize();
+    const [ resultsPath, resultsName ] = await this.zipCalibration();
+    const [ detailsPath, detailsName ] = await this.zipDetails();
 
     const client = new ftp.Client();
     const NUM_ATTEMPTS = 5;
@@ -979,7 +949,7 @@ class CalibProcess {
     num_failed_attempts = 0;
     for(let i = 0; i < NUM_ATTEMPTS; i++) {
       try {
-        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + resultsName, resultsName);
+        await client.uploadFrom(resultsPath, resultsName);
         break;
       } catch(err) {
         num_failed_attempts++;
@@ -994,7 +964,7 @@ class CalibProcess {
     num_failed_attempts = 0;
     for(let i = 0; i < NUM_ATTEMPTS; i++) {
       try {
-        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        await client.uploadFrom(detailsPath, detailsName);
         break;
       } catch(err) {
         num_failed_attempts++;
@@ -1013,6 +983,67 @@ class CalibProcess {
     // Set back to DHCP
     await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
   }
+
+  async zipCalibration() {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+
+    const resultsName = ["calib", this.serialNum, year, month, day].join("-") + ".zip";
+    const path = POCKETNC_VAR_DIRECTORY + "/" + resultsName;
+    await new Promise((resolve, reject) => {
+
+      const resultsArchive = archiver('zip', { zlib: { level: 9 }});
+      const resultsStream = fs.createWriteStream(path);
+      resultsArchive.pipe(resultsStream);
+      resultsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+      resultsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+      resultsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+
+      resultsStream.on('close', resolve);
+      resultsArchive.on('error', reject);
+
+      resultsArchive.finalize();
+    });
+
+    return [ path, resultsName ];
+  }
+
+  async zipDetails(failed) {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+
+    const nameArgs = ["details", this.serialNum, year, month, day];
+    if(failed) {
+      nameArgs.push("FAILED");
+    }
+    const detailsName = nameArgs.join("-") + ".zip";
+    const path = POCKETNC_VAR_DIRECTORY + "/" + detailsName;
+    await new Promise((resolve, reject) => {
+
+      const detailsArchive = archiver('zip', { zlib: { level: 9 }});
+      const detailsStream = fs.createWriteStream(path);
+      detailsArchive.pipe(detailsStream);
+
+      detailsArchive.directory(CALIB_DIR, false);
+      detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
+      detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
+      detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
+      detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
+      detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
+
+      detailsStream.on('close', resolve);
+      detailsArchive.on('error', reject);
+
+      detailsArchive.finalize();
+    });
+
+    return [ path, detailsName ];
+  }
+
   async uploadErrorFiles(){
     console.log('uploadErrorFiles');
     /*
@@ -1021,25 +1052,7 @@ class CalibProcess {
     *Convert calibrationOverlay to legacy format, then write it and comp files to emmc
     */
 
-    var date = new Date();
-    let year = date.getFullYear();
-    let month = date.getMonth() + 1;
-    let day = date.getDate();
-
-    var detailsName = ["details", this.serialNum, year, month, day, "FAILED"].join("-") + ".zip";
-
-    const detailsArchive = archiver('zip', { zlib: { level: 9 }});
-    const detailsStream = fs.createWriteStream(POCKETNC_VAR_DIRECTORY + "/" + detailsName);
-    detailsArchive.pipe(detailsStream);
-
-    detailsArchive.directory(CALIB_DIR, false);
-    detailsArchive.file(A_COMP_PATH, { name: 'a.comp' });
-    detailsArchive.file(B_COMP_PATH, { name: 'b.comp' });
-    detailsArchive.file(OVERLAY_PATH, { name: 'CalibrationOverlay.inc' });
-    detailsArchive.file(PYTHON_LOG, { name: 'python.log' });
-    detailsArchive.file(ROCKHOPPER_LOG, { name: 'linuxcnc_webserver.log' });
-
-    await detailsArchive.finalize();
+    const [ path, filename ] = await this.zipDetails(true);
 
     const client = new ftp.Client();
     const NUM_ATTEMPTS = 5;
@@ -1064,11 +1077,11 @@ class CalibProcess {
     num_failed_attempts = 0;
     for(let i = 0; i < NUM_ATTEMPTS; i++) {
       try {
-        await client.uploadFrom(POCKETNC_VAR_DIRECTORY + "/" + detailsName, detailsName);
+        await client.uploadFrom(path, filename);
         break;
       } catch(err) {
         num_failed_attempts++;
-        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", detailsName);
+        console.log("Failed attempt", num_failed_attempts, "of", NUM_ATTEMPTS, " when uploading", filename);
         await new Promise((resolve) => setTimeout(resolve, 500*Math.pow(2,i)));
         if(num_failed_attempts == NUM_ATTEMPTS) {
           throw err;
