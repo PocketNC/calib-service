@@ -1007,6 +1007,8 @@ class CalibProcess {
       resultsArchive.finalize();
     });
 
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
     return [ path, resultsName ];
   }
 
@@ -1040,6 +1042,8 @@ class CalibProcess {
 
       detailsArchive.finalize();
     });
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     return [ path, detailsName ];
   }
