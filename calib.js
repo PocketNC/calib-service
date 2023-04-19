@@ -211,8 +211,6 @@ const NUM_VERIFY_HOME_ATTEMPTS = 10;
 const B_HOMING_POSITIONS = [-20, 0, 20]
 const A_HOMING_POSITIONS = [-5, 0, 20]
 
-const DEFAULT_B_HOME_OFFSET = -5.0
-const DEFAULT_A_HOME_OFFSET = -17.5
 //#endregion CONSTANTS
 
 
@@ -723,6 +721,12 @@ class CalibProcess {
     console.log('runHomingA');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_a_home_state.ngc'));
+
+    const aHomeOffsetStr = await execPromise(`halcmd -s show pin ini.3.home_offset` );
+    const aHomeOffsetStart = aHomeOffsetStr.stdout.search("IN") + 2;
+    const aHomeOffsetEnd = aHomeOffsetStr.stdout.search("ini.3.home_offset");
+    const currentAHomeOffset = parseFloat(aHomeOffsetStr.stdout.slice(aHomeOffsetStart, aHomeOffsetEnd))
+
     while(true){
       await execPromise(`halcmd setp ini.3.home_offset 0`);
       var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
@@ -748,12 +752,12 @@ class CalibProcess {
     }
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
     while(true){
-      await execPromise(`halcmd -s setp ini.3.home_offset ${DEFAULT_A_HOME_OFFSET}` );
+      await execPromise(`halcmd -s setp ini.3.home_offset ${currentAHomeOffset}` );
       var out = await execPromise(`halcmd -s show pin ini.3.home_offset` );
       var idxStart = out.stdout.search("IN") + 2;
       var idxEnd = out.stdout.search("ini.3.home_offset");
       var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
-      if(curr === DEFAULT_A_HOME_OFFSET){
+      if(curr === currentAHomeOffset){
         break;
       }
       else{
@@ -770,6 +774,12 @@ class CalibProcess {
     console.log('runHomingB');
     await this.performActionIfOk(() => this.rockhopperClient.mdiCmdAsync(`G0 Y${Y_POS_PROBING}A0B0`));
     await this.performActionIfOk(() => this.rockhopperClient.runToCompletion('v2_calib_init_b_home_state.ngc'))
+
+    const bHomeOffsetStr = await execPromise(`halcmd -s show pin ini.4.home_offset` );
+    const bHomeOffsetStart = bHomeOffsetStr.stdout.search("IN") + 2;
+    const bHomeOffsetEnd = bHomeOffsetStr.stdout.search("ini.4.home_offset");
+    const currentBHomeOffset = parseFloat(bHomeOffsetStr.stdout.slice(bHomeOffsetStart, bHomeOffsetEnd))
+
     while(true){
       await execPromise(`halcmd setp ini.4.home_offset 0` );
       var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
@@ -798,12 +808,12 @@ class CalibProcess {
 
     //ensure we've reset home_offset before moving on, a crash could occur otherwise
     while(true){
-      await execPromise(`halcmd -s setp ini.4.home_offset ${DEFAULT_B_HOME_OFFSET}` );
+      await execPromise(`halcmd -s setp ini.4.home_offset ${currentBHomeOffset}` );
       var out = await execPromise(`halcmd -s show pin ini.4.home_offset` );
       var idxStart = out.stdout.search("IN") + 2;
       var idxEnd = out.stdout.search("ini.4.home_offset");
       var curr = parseFloat(out.stdout.slice(idxStart, idxEnd))
-      if(curr === DEFAULT_B_HOME_OFFSET){
+      if(curr === currentBHomeOffset){
         break;
       }
       else{
