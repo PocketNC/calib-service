@@ -933,6 +933,8 @@ class CalibProcess {
   async runUploadFiles(){
     console.log('runUploadFiles');
 
+    await this.rockhopperClient.writeLegacyCalibration();
+
     const [ resultsPath, resultsName ] = await this.zipCalibration();
     const [ detailsPath, detailsName ] = await this.zipDetails();
 
@@ -988,8 +990,6 @@ class CalibProcess {
 
     client.close();
     
-    await this.rockhopperClient.writeLegacyCalibration();
-
     // Set back to DHCP
     await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
   }
