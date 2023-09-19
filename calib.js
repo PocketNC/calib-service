@@ -612,7 +612,7 @@ class CalibProcess {
 
   async errorCallback(msg) {
     console.log("in error callback", msg);
-    if(msg.data.type && msg.data.type === 'error'){
+    if(msg.data && msg.data.type && msg.data.type === 'error'){
       this.error = true;
       this.errorMsg = msg.data.text;
 
