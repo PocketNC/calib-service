@@ -637,7 +637,7 @@ class CalibProcess {
     console.log('runEraseCompensation');
 
     // Set static IP address
-    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 manual 10.0.0.100 255.255.255.0');
+    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp');
 
     await copyExistingOverlay();
     await copyDefaultOverlay(this.v2variant);
