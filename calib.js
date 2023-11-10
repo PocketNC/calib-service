@@ -636,9 +636,6 @@ class CalibProcess {
   async runEraseCompensation(){//TODO rename this stage to something more fitting, maybe SETUP_FILES
     console.log('runEraseCompensation');
 
-    // Set static IP address
-    await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp');
-
     await copyExistingOverlay();
     await copyDefaultOverlay(this.v2variant);
     await copyDefaultCompensation();
