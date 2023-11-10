@@ -18,8 +18,6 @@ async function main() {
   console.log(process.versions);
   console.log(`Starting calibration upload. serial ${serialNum}, spindle RPM ${v2variant}k`);
 
-  await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 manual 10.0.0.101 255.255.255.0');
-
   while(true){
     await new Promise(r => setTimeout(r, 1000));
     if(calibProcess.commandServer.isConnected() && calibProcess.rockhopperClient.connected){
