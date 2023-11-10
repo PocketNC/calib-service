@@ -188,6 +188,7 @@ const STATE_STOP = "STOP" //Terminate the process
 const STATE_ERROR = "ERROR" //Something has gone wrong, process should stop
 const STATE_FAIL = "FAIL" //The machine has failed a spec check, process should stop
 const STATE_COMPLETE = "COMPLETE" //Calibration process has completed succesfully. This process is still active to communicate with UI
+const STATE_UPLOADED = "UPLOADED" //Calibration process has uploaded its artifacts succesfully.
 
 const LEVEL_CALIB = "calib"
 const LEVEL_VERIFY = "verify"
@@ -987,6 +988,8 @@ class CalibProcess {
 
     client.close();
     
+    this.processState = STATE_UPLOADED;
+    await this.sendUpdate();
     // Set back to DHCP
     await execPromise('connmanctl config $(connmanctl services | egrep -o "ethernet.*$") --ipv4 dhcp')
   }
